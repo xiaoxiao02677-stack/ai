@@ -76,3 +76,9 @@ private/
 mcp_servers.json
 
 .vscode/
+# --- 安全加固: 防止密钥/记忆库误提交 (2026-09-30 泄露事件后补) ---
+conf.yaml.bak*
+conf.yaml.*bak*
+config/backups/
+config/tls/
+long_term_memory_data/
