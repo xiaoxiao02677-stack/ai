@@ -43,10 +43,11 @@
 即 `agent/stateless_llm/`（见上）。**业务与基础设施分离良好**：Agent → StatelessLLMInterface → 各 Provider。
 
 ### Memory（长期记忆子系统）
-`src/open_llm_vtuber/long_term_memory/` — 11 文件 / ~2,300 行（未跟踪，本次交付）
+`src/open_llm_vtuber/long_term_memory/` — 12 文件 + storage/ 子包（Phase 1A 解耦后）
 - 门面：`__init__.py` (369) — get_config/save_config/get_manager/build_retrieval_context/extract_from_turn
-- `manager.py` (246) / `extractor.py` (277) / `retriever.py` / `store.py` (406) / `deduplicator.py` / `keyword_extractor.py` / `privacy.py` / `prompt_builder.py` / `schemas.py` / `run_tests.py`
-- **零外部依赖**（不 import 项目内其他模块）→ 可独立成包
+- `manager.py` (246) / `extractor.py` (277) / `retriever.py` / `store.py`（薄门面，见下）/ `deduplicator.py` / `keyword_extractor.py` / `privacy.py` / `prompt_builder.py` / `schemas.py` / `run_tests.py`
+- `storage/` 子包（Phase 1A 新增，6 文件）：`sqlite_provider.py`（StorageProvider 实现：连接/锁/DDL/行映射）→ `memory_repository.py` / `state_repository.py` / `summary_repository.py` / `keyword_repository.py`（4 个领域仓库，共享同一 provider）→ `store.py` 兼容门面（MemoryStore 保持 25 方法原签名，委托到仓库）
+- **零外部依赖**（不 import 项目内其他模块）→ 可独立成包；storage 层为未来 Hermes provider 预留了接口契约
 - 被调用方：仅 `conversations/single_conversation.py`
 
 ### ASR

@@ -48,9 +48,10 @@
 - `agent_factory.py` / `stateless_llm_factory.py` 工厂
 - `stateless_llm/`（6 文件 / 891 行）LLM Provider 层
 
-### 记忆层 `long_term_memory/`（11 文件 / ~2,300 行，零内部依赖）
+### 记忆层 `long_term_memory/`（12 文件 + storage/ 子包，零内部依赖）
 - `__init__.py`（369）门面：get_manager / build_retrieval_context / extract_from_turn / 抽取 LLM 独立配置
-- `manager.py`（246）/ `extractor.py`（277）/ `retriever.py` / `store.py`（406）/ `deduplicator.py` / `keyword_extractor.py` / `privacy.py` / `prompt_builder.py` / `schemas.py` / `run_tests.py`（41 检查）
+- `manager.py`（246）/ `extractor.py`（277）/ `retriever.py` / `store.py`（150，Phase 1A 后为兼容门面）/ `deduplicator.py` / `keyword_extractor.py` / `privacy.py` / `prompt_builder.py` / `schemas.py` / `run_tests.py`（41 检查）
+- `storage/`（6 文件 / 495 行，Phase 1A）：`sqlite_provider.py`（连接/锁/DDL/行映射）+ 4 领域仓库（memory/state/summary/keyword）——`store.py` 门面 25 方法委托至此；Hermes provider 接口契约已备案未实现
 
 ### 基础设施层
 - `asr/`（11 文件）、`tts/`、`translate/`、`vad/`、`mcpp/`、`config_manager/`、`data_model/`

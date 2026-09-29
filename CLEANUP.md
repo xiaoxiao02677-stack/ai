@@ -75,6 +75,18 @@
 - **建议**：确认配置面板功能已稳定后删除（或移到 git 历史里留存即可——它已在一个提交中留档）。
 - **发现**：2026-09-30（模块 #3 proxy 归位时目录扫描）
 
+## 8. 死方法 ×2 + 死变量 ×1（LTM store）
+
+- **位置**：`src/open_llm_vtuber/long_term_memory/`（Phase 1A 解耦后位于 storage/ 与 store.py 门面）
+- **问题**：全项目调用图扫描（排除 `__pycache__`/`.venv`/node_modules）确认以下成员**零调用方**：
+  1. `MemoryStore.find_active_by_content(content)` — 精确内容查找，manager/retriever/memory_panel/run_tests 之外无任何调用；
+  2. `MemoryStore.count_memories(status)` — 仅返回计数，与 `stats()` 功能重叠；
+  3. `long_term_memory/__init__.py:30` 的模块级 `_DATA_DIR` 变量 — 赋值后从未使用（真实数据目录由 store/provider 各自计算 `cwd/long_term_memory_data`）。
+- **影响**：无运行时影响；但虚增 API 面积，误导后续 AI 阅读（我第一次让 AI 分析调用图时它也以为这些是活代码）。
+- **现状**：Phase 1A 按"不改行为/API 兼容"原则**原样保留**（repository 实现了对应方法，门面继续导出）。等价性测试甚至专门测了这两个死方法（行为一致）。
+- **建议**：下一阶段确认后从 repository + 门面一并移除，同时删除 `_DATA_DIR` 死变量。
+- **发现**：2026-09-30（Phase 1A 全量调用图分析）
+
 ## 待续
 
 后续模块逐个拆分时如有新发现，按同格式追加。
