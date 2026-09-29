@@ -77,6 +77,60 @@ const NAV_SCHEMA = [
   },
 ];
 
+/* ---------------- Control Center 模块层 ----------------
+   产品级一级导航。pages 仅做导航映射（指向 NAV_SCHEMA 的页 id），
+   不改变任何 YAML / API / 数据结构。
+   memory = 独立记忆面板入口（/memory/）；tools = 占位（暂未接入）。 */
+
+const MODULE_SCHEMA = [
+  {
+    id: "dashboard",
+    label: "仪表盘",
+    icon: "home",
+    desc: "状态总览与快捷入口",
+  },
+  {
+    id: "ai",
+    label: "AI 与模型",
+    icon: "cpu",
+    desc: "对话 Agent 选择、LLM 提供方与凭据",
+    pages: ["agent"],
+  },
+  {
+    id: "voice",
+    label: "语音",
+    icon: "audio",
+    desc: "语音识别 / 语音合成 / 预处理 / 活动检测",
+    pages: ["asr", "tts", "preprocess", "vad"],
+  },
+  {
+    id: "character",
+    label: "角色",
+    icon: "user",
+    desc: "角色名称 / 头像 / 人设提示词",
+    pages: ["character"],
+  },
+  {
+    id: "memory",
+    label: "记忆",
+    icon: "book",
+    desc: "对话记忆管理（独立面板）",
+  },
+  {
+    id: "tools",
+    label: "工具",
+    icon: "wrench",
+    desc: "MCP 工具（暂未接入）",
+  },
+  {
+    id: "system",
+    label: "系统",
+    icon: "server",
+    desc: "服务设置与直播接入",
+    pages: ["system", "live"],
+  },
+];
+
 const ICONS = {
   server: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>',
   user: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>',
@@ -87,6 +141,9 @@ const ICONS = {
   activity: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>',
   radio: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="2"/><path d="M16.24 7.76a6 6 0 0 1 0 8.49M7.76 16.24a6 6 0 0 1 0-8.49M19.07 4.93a10 10 0 0 1 0 14.14M4.93 19.07a10 10 0 0 1 0-14.14"/></svg>',
   chevron: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>',
+  home: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>',
+  book: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>',
+  wrench: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>',
 };
 
 /* ---------------- 中文备注词典 ----------------
@@ -392,7 +449,9 @@ let configTree = null;
 let comments = {};
 let rawYaml = "";
 let backupsList = [];
-let currentPage = "system";
+let currentModule = "dashboard"; // Control Center 一级模块 id
+let currentPage = null;          // 当前 NAV_SCHEMA 配置页 id（仅配置编辑器视图）
+const modulePageChoice = {};     // 模块 -> 上次停留的子页 id
 let searchQuery = "";
 let dirtyPaths = new Map(); // path -> new value
 let savingLock = false;
@@ -453,24 +512,72 @@ async function loadState() {
 
 /* ---------------- navigation ---------------- */
 
+/* 渲染侧栏一级模块导航。配置页（NAV_SCHEMA）作为模块的二级入口，
+   不再直接出现在侧栏；点击模块后由 handleModuleNavigation 分发。 */
 function buildNav() {
   const nav = $("#nav");
   nav.innerHTML = "";
-  NAV_SCHEMA.forEach((page) => {
+  MODULE_SCHEMA.forEach((mod) => {
     const item = document.createElement("div");
-    item.className = `nav-item${page.id === currentPage ? " active" : ""}`;
-    item.dataset.page = page.id;
+    item.className = `nav-item${mod.id === currentModule ? " active" : ""}`;
+    item.dataset.module = mod.id;
+    let extra = "";
+    if (mod.id === "memory") extra = `<span class="nav-link-icon">${ICONS.chevron}</span>`;
+    if (mod.id === "tools") extra = `<span class="nav-badge">即将上线</span>`;
     item.innerHTML = `
-      <span class="nav-icon">${ICONS[page.icon]}</span>
-      <span class="nav-label">${esc(page.label)}</span>`;
-    item.addEventListener("click", () => {
-      currentPage = page.id;
-      searchQuery = "";
-      $("#search").value = "";
-      render();
-    });
+      <span class="nav-icon">${ICONS[mod.icon]}</span>
+      <span class="nav-label">${esc(mod.label)}</span>${extra}`;
+    item.addEventListener("click", () => handleModuleNavigation(mod.id));
     nav.appendChild(item);
   });
+}
+
+/* 模块导航分发：dashboard / memory / tools 为独立视图，
+   其余模块进入映射的 NAV_SCHEMA 配置页。 */
+function handleModuleNavigation(moduleId) {
+  const mod = MODULE_SCHEMA.find((m) => m.id === moduleId);
+  if (!mod) return;
+  if (moduleId === "memory") {
+    openMemoryWeb(); // 记忆是独立面板：新标签页打开，不切换当前视图
+    return;
+  }
+  currentModule = moduleId;
+  searchQuery = "";
+  $("#search").value = "";
+  if (!mod.pages) {
+    currentPage = null;
+  } else {
+    currentPage = modulePageChoice[moduleId] || mod.pages[0];
+  }
+  render();
+}
+
+/* 进入某个 NAV_SCHEMA 配置页（由模块视图 / 仪表盘快捷入口调用） */
+function openConfigPage(pageId) {
+  const mod = MODULE_SCHEMA.find((m) => m.pages && m.pages.includes(pageId));
+  if (mod) {
+    currentModule = mod.id;
+    modulePageChoice[mod.id] = pageId;
+  } else {
+    currentModule = "system";
+  }
+  currentPage = pageId;
+  searchQuery = "";
+  $("#search").value = "";
+  render();
+}
+
+/* 打开独立记忆面板（server.py 将 config/memory_web 挂载在 /memory/） */
+function openMemoryWeb() {
+  window.open("/memory/", "_blank");
+}
+
+/* 侧栏搜索在模块视图下不可用：提示用户先进入具体模块 */
+function focusSearchToModule() {
+  if (!searchQuery) return; // 清空输入时不提示
+  const mod = MODULE_SCHEMA.find((m) => m.id === currentModule);
+  if (mod && mod.pages) return; // 配置编辑器视图，搜索可用
+  toast("warn", "请先进入具体模块", "搜索仅作用于配置项（如 AI 与模型 / 语音 / 系统）");
 }
 
 /* ---------------- rendering ---------------- */
@@ -566,11 +673,34 @@ function groupIntoCards(rows, rootPath) {
   return cards;
 }
 
+/* 渲染配置编辑器页（模块子页标签 + 原有 renderPage 逻辑） */
 function renderPage() {
   const page = NAV_SCHEMA.find((p) => p.id === currentPage);
+  if (!page) return;
   const content = $("#content");
   $("#page-title").textContent = page.label;
   $("#page-desc").textContent = page.desc;
+
+  // 模块子页标签（如 语音 → ASR / TTS / 预处理 / VAD）
+  const mod = MODULE_SCHEMA.find((m) => m.id === currentModule);
+  if (mod && mod.pages && mod.pages.length > 1) {
+    const tabs = document.createElement("div");
+    tabs.className = "module-tabs";
+    mod.pages.forEach((pid) => {
+      const p = NAV_SCHEMA.find((x) => x.id === pid);
+      if (!p) return;
+      const tab = document.createElement("button");
+      tab.type = "button";
+      tab.className = `module-tab${pid === currentPage ? " active" : ""}`;
+      tab.textContent = p.label;
+      tab.addEventListener("click", () => openConfigPage(pid));
+      tabs.appendChild(tab);
+    });
+    content.innerHTML = "";
+    content.appendChild(tabs);
+  } else {
+    content.innerHTML = "";
+  }
 
   let rows = collectRows(page.root, page.skip || []);
   if (searchQuery) {
@@ -584,9 +714,10 @@ function renderPage() {
   }
 
   if (!rows.length) {
-    content.innerHTML = `<div class="empty-state">${
-      searchQuery ? "没有匹配的配置项" : "该分区没有配置项"
-    }</div>`;
+    const empty = document.createElement("div");
+    empty.className = "empty-state";
+    empty.textContent = searchQuery ? "没有匹配的配置项" : "该分区没有配置项";
+    content.appendChild(empty);
     return;
   }
 
@@ -611,15 +742,187 @@ function renderPage() {
     grid.appendChild(card);
   });
 
-  content.innerHTML = "";
   content.appendChild(grid);
+}
+
+/* ---------------- Control Center 视图（仪表盘 / 工具占位） ---------------- */
+
+/* 从 configTree 读当前配置摘要（只读展示，不发起写操作） */
+function getConfigSummary() {
+  if (!configTree) return null;
+  const agentChoice = get(configTree, "character_config.agent_config.conversation_agent_choice");
+  const provider = get(configTree, `character_config.agent_config.agent_settings.${agentChoice}.llm_provider`);
+  const model = get(configTree, `character_config.agent_config.llm_configs.${provider}.model`);
+  return {
+    agent: agentChoice,
+    provider,
+    model,
+    asr: get(configTree, "character_config.asr_config.asr_model"),
+    tts: get(configTree, "character_config.tts_config.tts_config.tts_model"),
+    characterName: get(configTree, "character_config.character_name"),
+    live2d: get(configTree, "character_config.live2d_model_name"),
+  };
+}
+
+function dashboardStatusLine(label, value) {
+  const has = value !== undefined && value !== null && String(value).trim() !== "";
+  return `
+    <div class="dash-status-row">
+      <span class="dash-status-label">${esc(label)}</span>
+      <span class="dash-status-value ${has ? "" : "unset"}">${has ? esc(String(value)) : "未配置"}</span>
+    </div>`;
+}
+
+function dashboardModuleCard(mod, icon, summaryHtml) {
+  const card = document.createElement("div");
+  card.className = "dash-card";
+  card.innerHTML = `
+    <div class="dash-card-head">
+      <span class="dash-card-icon">${ICONS[icon]}</span>
+      <div class="dash-card-title">
+        <h3>${esc(mod.label)}</h3>
+        <p>${esc(mod.desc)}</p>
+      </div>
+    </div>
+    ${summaryHtml}
+    <div class="dash-card-actions"></div>`;
+  const actions = card.querySelector(".dash-card-actions");
+  if (mod.pages) {
+    mod.pages.forEach((pid) => {
+      const p = NAV_SCHEMA.find((x) => x.id === pid);
+      if (!p) return;
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "btn btn-ghost btn-sm";
+      b.textContent = p.label;
+      b.addEventListener("click", () => openConfigPage(pid));
+      actions.appendChild(b);
+    });
+  }
+  return card;
+}
+
+function renderDashboard() {
+  const content = $("#content");
+  $("#page-title").textContent = "仪表盘";
+  $("#page-desc").textContent = "各模块状态总览与快捷入口";
+  content.innerHTML = "";
+
+  // 服务状态行（调 /config/api/status；失败显示"暂无状态"）
+  const serviceCard = document.createElement("div");
+  serviceCard.className = "dash-service";
+  serviceCard.innerHTML = `
+    <div class="dash-service-left">
+      <span class="dash-service-dot pending"></span>
+      <div>
+        <div class="dash-service-title">主服务</div>
+        <div class="dash-service-sub">Open-LLM-VTuber 运行状态</div>
+      </div>
+    </div>
+    <div class="dash-service-status" id="dash-service-status">检查中…</div>`;
+  content.appendChild(serviceCard);
+
+  const s = getConfigSummary();
+
+  const grid = document.createElement("div");
+  grid.className = "dash-grid";
+
+  grid.appendChild(dashboardModuleCard(
+    MODULE_SCHEMA.find((m) => m.id === "ai"), "cpu",
+    dashboardStatusLine("对话 Agent", s ? (s.agent || "未配置") : "加载失败") +
+    dashboardStatusLine("LLM 提供方", s ? (s.provider || "未配置") : "") +
+    dashboardStatusLine("模型", s ? (s.model || "未配置") : "")
+  ));
+
+  grid.appendChild(dashboardModuleCard(
+    MODULE_SCHEMA.find((m) => m.id === "voice"), "audio",
+    dashboardStatusLine("ASR 引擎", s ? (s.asr || "未配置") : "") +
+    dashboardStatusLine("TTS 引擎", s ? (s.tts || "未配置") : "")
+  ));
+
+  grid.appendChild(dashboardModuleCard(
+    MODULE_SCHEMA.find((m) => m.id === "character"), "user",
+    dashboardStatusLine("角色名", s ? (s.characterName || "未配置") : "") +
+    dashboardStatusLine("Live2D 模型", s ? (s.live2d || "未配置") : "")
+  ));
+
+  // 记忆：入口卡片，点击打开独立记忆面板
+  const memoryCard = document.createElement("div");
+  memoryCard.className = "dash-card";
+  const memMod = MODULE_SCHEMA.find((m) => m.id === "memory");
+  memoryCard.innerHTML = `
+    <div class="dash-card-head">
+      <span class="dash-card-icon">${ICONS.book}</span>
+      <div class="dash-card-title">
+        <h3>${esc(memMod.label)}</h3>
+        <p>${esc(memMod.desc)}</p>
+      </div>
+    </div>
+    <div class="dash-card-actions"><button type="button" class="btn btn-primary btn-sm">打开记忆面板</button></div>`;
+  memoryCard.querySelector("button").addEventListener("click", openMemoryWeb);
+  grid.appendChild(memoryCard);
+
+  content.appendChild(grid);
+
+  // 异步刷新服务状态
+  refreshDashboardService(serviceCard);
+}
+
+async function refreshDashboardService(card) {
+  const dot = card.querySelector(".dash-service-dot");
+  const statusEl = card.querySelector(".dash-service-status");
+  try {
+    const st = await jfetch(API.status);
+    statusEl.textContent = st.running ? "运行中" : "未运行";
+    statusEl.className = `dash-service-status ${st.running ? "ok" : "down"}`;
+    dot.className = `dash-service-dot ${st.running ? "ok" : "down"}`;
+  } catch (e) {
+    statusEl.textContent = "暂无状态";
+    statusEl.className = "dash-service-status";
+    dot.className = "dash-service-dot";
+  }
+}
+
+function renderTools() {
+  const content = $("#content");
+  const mod = MODULE_SCHEMA.find((m) => m.id === "tools");
+  $("#page-title").textContent = "工具";
+  $("#page-desc").textContent = mod.desc;
+  content.innerHTML = `
+    <div class="dash-card dash-tools-placeholder">
+      <div class="dash-card-head">
+        <span class="dash-card-icon">${ICONS.wrench}</span>
+        <div class="dash-card-title">
+          <h3>工具（MCP）</h3>
+          <p>外接工具调用能力，当前阶段暂未接入</p>
+        </div>
+      </div>
+      <div class="dash-placeholder-body">
+        <p>暂未配置 —— 工具模块将在后续阶段接入 MCP 服务器管理。</p>
+      </div>
+    </div>`;
+}
+
+/* 总渲染入口：dashboard / tools 为产品视图，其余走配置编辑器 */
+function renderMain() {
+  if (currentModule === "dashboard") {
+    renderDashboard();
+  } else if (currentModule === "tools") {
+    renderTools();
+  } else if (currentPage) {
+    renderPage();
+  } else {
+    // 兜底：模块无映射页时回到仪表盘
+    currentModule = "dashboard";
+    renderDashboard();
+  }
+  updateSaveBtn();
 }
 
 function render() {
   buildNav();
-  renderPage();
-  bindInputs();
-  updateSaveBtn();
+  renderMain();
+  if (currentPage) bindInputs();
 }
 
 /* ---------------- dirty tracking ---------------- */
@@ -818,6 +1121,10 @@ function bindSearch() {
     clearTimeout(timer);
     timer = setTimeout(() => {
       searchQuery = e.target.value.trim();
+      if (!currentPage) {
+        focusSearchToModule(); // 仪表盘 / 工具视图下搜索不可用
+        return;
+      }
       renderPage();
       bindInputs();
     }, 200);
