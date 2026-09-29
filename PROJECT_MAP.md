@@ -91,11 +91,11 @@
 | websocket_handler.py | 612 | WS 会话协议 | 保留位置（入口层） |
 | service_context.py | 572 | DI 容器 | 保留 |
 | chat_history_manager.py | 374 | 聊天历史 JSON 持久化 | 保留 |
-| proxy_handler.py | 311 | Bilibili proxy WS | 保留 |
+| ~~proxy_handler.py~~ | ~~311~~ | ~~Bilibili proxy WS~~ | ✅ 2026-09-30 已归位 `proxy/proxy_handler.py`（模块 #3，纯搬移，MD5 不变） |
 | routes.py | 254 | HTTP 路由 | 保留 |
 | server.py | 207 | ASGI 入口 | 9 文件 |
 | live2d_model.py | 194 | Live2D 模型 | 保留 |
-| proxy_message_queue.py | 164 | proxy 消息队列 | 可与 proxy_handler 同目录 |
+| ~~proxy_message_queue.py~~ | ~~164~~ | ~~proxy 消息队列~~ | ✅ 2026-09-30 已归位 `proxy/proxy_message_queue.py`（模块 #3，纯搬移，MD5 不变） |
 | message_handler.py | 92 | 消息类型分发 | 保留 |
 | ~~chat_group.py~~ | ~~299~~ | ~~多人会话状态~~ | ✅ 2026-09-30 已归位 `conversations/chat_group.py`（模块 #2，纯搬移，MD5 不变） |
 

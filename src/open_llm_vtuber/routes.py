@@ -9,7 +9,7 @@ from starlette.websockets import WebSocketDisconnect
 from loguru import logger
 from .service_context import ServiceContext
 from .websocket_handler import WebSocketHandler
-from .proxy_handler import ProxyHandler
+from .proxy.proxy_handler import ProxyHandler
 
 
 def init_client_ws_route(default_context_cache: ServiceContext) -> APIRouter:
