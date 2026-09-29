@@ -6,7 +6,7 @@ import numpy as np
 from fastapi import WebSocket
 from loguru import logger
 
-from ..chat_group import ChatGroupManager
+from .chat_group import ChatGroupManager
 from ..chat_history_manager import store_message
 from ..service_context import ServiceContext
 from .group_conversation import process_group_conversation

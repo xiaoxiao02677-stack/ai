@@ -7,7 +7,7 @@ import numpy as np
 from loguru import logger
 
 from .service_context import ServiceContext
-from .chat_group import (
+from .conversations.chat_group import (
     ChatGroupManager,
     handle_group_operation,
     handle_client_disconnect,
