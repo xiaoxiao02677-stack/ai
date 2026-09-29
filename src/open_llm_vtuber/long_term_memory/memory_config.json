@@ -1,0 +1,42 @@
+{
+  "enabled": true,
+  "max_injected_memories": 5,
+  "min_total_score": 0.3,
+  "max_injection_chars": 600,
+  "w_relevance": 0.4,
+  "w_importance": 0.25,
+  "w_recency": 0.15,
+  "w_confidence": 0.15,
+  "w_usage": 0.05,
+  "extraction_min_chars": 4,
+  "min_importance_to_store": 0.35,
+  "extraction_timeout": 60.0,
+  "extraction_cooldown": 1.0,
+  "summary_interval": 20,
+  "state_update_interval": 5,
+  "privacy_patterns": [
+    "sk-[A-Za-z0-9]{8,}",
+    "ghp_[A-Za-z0-9]{10,}",
+    "gho_[A-Za-z0-9]{10,}",
+    "xox[bpars]-[A-Za-z0-9-]{10,}",
+    "AKIA[0-9A-Z]{16}",
+    "AIza[0-9A-Za-z_-]{20,}"
+  ],
+  "privacy_keywords": [
+    "密码",
+    "password",
+    "api key",
+    "apikey",
+    "api_key",
+    "token",
+    "secret",
+    "cookie",
+    "银行卡",
+    "卡号",
+    "验证码"
+  ],
+  "llm": {
+    "mode": "chat"
+  },
+  "memory_debug": true
+}

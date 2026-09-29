@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>记忆管理 · Open-LLM-VTuber</title>
+  <link rel="stylesheet" href="style.css?v=3" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23a78bfa' stroke-width='2'><path d='M12 2a7 7 0 0 0-7 7c0 2.38 1.19 4.47 3 5.74V17a2 2 0 0 0 2 2h4a2 2 0 0 0 2-2v-2.26c1.81-1.27 3-3.36 3-5.74a7 7 0 0 0-7-7z'/><line x1='9' y1='21' x2='15' y2='21'/></svg>" />
+</head>
+<body>
+  <div id="app">
+    <aside class="sidebar">
+      <div class="sidebar-header">
+        <div class="logo">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 2a7 7 0 0 0-7 7c0 2.38 1.19 4.47 3 5.74V17a2 2 0 0 0 2 2h4a2 2 0 0 0 2-2v-2.26c1.81-1.27 3-3.36 3-5.74a7 7 0 0 0-7-7z"/>
+            <line x1="9" y1="21" x2="15" y2="21"/>
+          </svg>
+        </div>
+        <div class="logo-text">
+          <h1>记忆管理</h1>
+          <span class="sub">AI Companion Memory</span>
+        </div>
+      </div>
+
+      <div class="conf-picker">
+        <label for="conf-select">角色 Conf UID</label>
+        <select id="conf-select"></select>
+      </div>
+
+      <nav class="sidebar-nav" id="nav"></nav>
+
+      <div class="sidebar-footer">
+        <button class="btn btn-ghost btn-block" id="btn-wipe">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>
+          清空记忆
+        </button>
+        <a class="btn btn-ghost btn-block" href="/" target="_blank">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+          返回主站
+        </a>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div class="topbar-title">
+          <h2 id="page-title">记忆</h2>
+          <p class="page-desc" id="page-desc"></p>
+        </div>
+        <div class="topbar-actions">
+          <button class="btn btn-ghost" id="btn-reload" title="刷新数据">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+            刷新
+          </button>
+          <button class="btn btn-ghost" id="btn-refresh-sessions" title="重新扫描角色列表">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>
+            重扫角色
+          </button>
+          <button class="btn btn-primary" id="btn-add" title="手动添加记忆">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            添加记忆
+          </button>
+        </div>
+      </header>
+
+      <section class="content" id="content">
+        <div class="loading-state">
+          <div class="spinner"></div>
+          <p>正在加载…</p>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- Add / edit memory modal -->
+  <div class="modal-overlay hidden" id="mem-modal">
+    <div class="modal">
+      <div class="modal-header">
+        <h3 id="mem-modal-title">添加记忆</h3>
+        <button class="btn btn-ghost btn-sm" data-close="mem-modal">关闭</button>
+      </div>
+      <div class="modal-body">
+        <div class="field">
+          <label>记忆内容</label>
+          <textarea class="input" id="f-content" rows="3" placeholder="例如：用户最喜欢吃火锅（尤其是麻辣锅底）"></textarea>
+          <div class="field-hint">将自动做隐私过滤与防注入清洗，长度上限 200 字。</div>
+        </div>
+        <div class="field-row">
+          <div class="field">
+            <label>类型</label>
+            <select class="input" id="f-type"></select>
+          </div>
+          <div class="field">
+            <label>状态</label>
+            <select class="input" id="f-status">
+              <option value="active">active（生效中）</option>
+              <option value="deprecated">deprecated（已废弃）</option>
+            </select>
+          </div>
+        </div>
+        <div class="field-row">
+          <div class="field">
+            <label>重要度 importance</label>
+            <div class="range-field">
+              <input type="range" class="input" id="f-importance" min="0" max="1" step="0.05" value="0.6" />
+              <span class="range-value" id="v-importance">0.60</span>
+            </div>
+          </div>
+          <div class="field">
+            <label>置信度 confidence</label>
+            <div class="range-field">
+              <input type="range" class="input" id="f-confidence" min="0" max="1" step="0.05" value="0.9" />
+              <span class="range-value" id="v-confidence">0.90</span>
+            </div>
+          </div>
+        </div>
+        <div class="field">
+          <label>关联关键词</label>
+          <input type="text" class="input mono" id="f-keywords" placeholder="火锅, 麻辣, 偏好（逗号分隔，可选）" />
+          <div class="field-hint">用于关键词检索命中，建议填写记忆中出现过的实体词。</div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <span class="hint">手动添加的记忆 source 标记为 manual。</span>
+        <button class="btn btn-primary" id="btn-save-mem">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Add keyword modal -->
+  <div class="modal-overlay hidden" id="kw-modal">
+    <div class="modal modal-sm">
+      <div class="modal-header">
+        <h3>添加关键词</h3>
+        <button class="btn btn-ghost btn-sm" data-close="kw-modal">关闭</button>
+      </div>
+      <div class="modal-body">
+        <div class="field">
+          <label>关键词</label>
+          <input type="text" class="input" id="f-kw" placeholder="例如：Python" />
+        </div>
+        <div class="field">
+          <label>分类</label>
+          <select class="input" id="f-kw-cat"></select>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <span class="hint">关键词会提升相关记忆的检索得分。</span>
+        <button class="btn btn-primary" id="btn-save-kw">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Retrieve test modal -->
+  <div class="modal-overlay hidden" id="retrieve-modal">
+    <div class="modal">
+      <div class="modal-header">
+        <h3>检索测试</h3>
+        <button class="btn btn-ghost btn-sm" data-close="retrieve-modal">关闭</button>
+      </div>
+      <div class="modal-body">
+        <div class="field">
+          <label>模拟用户输入</label>
+          <textarea class="input" id="f-rt-text" rows="2" placeholder="例如：今晚吃什么好呢"></textarea>
+          <div class="field-hint">运行完整检索管线（关键词命中 + 排序 + 注入构建），不写入、不修改数据。</div>
+        </div>
+        <div id="rt-results"></div>
+      </div>
+      <div class="modal-footer">
+        <span class="hint">得分 = 相关性×0.40 + 重要度×0.25 + 时近性×0.15 + 置信度×0.15 + 使用×0.05</span>
+        <button class="btn btn-primary" id="btn-run-rt">运行检索</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Wipe confirm modal -->
+  <div class="modal-overlay hidden" id="wipe-modal">
+    <div class="modal modal-sm">
+      <div class="modal-header">
+        <h3>清空记忆</h3>
+      </div>
+      <div class="modal-body">
+        <p style="font-size:13px; line-height:1.7;">即将删除 <b id="wipe-target" style="color:var(--red);"></b> 的<strong>全部</strong>长期记忆、关键词、用户状态与对话摘要。此操作不可恢复。</p>
+        <div class="field" style="margin-top:12px;">
+          <label>请输入 DELETE 以确认</label>
+          <input type="text" class="input mono" id="f-wipe-confirm" placeholder="DELETE" />
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-ghost" data-close="wipe-modal">取消</button>
+        <button class="btn btn-danger" id="btn-confirm-wipe">确认清空</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Generic confirm modal -->
+  <div class="modal-overlay hidden" id="confirm-modal">
+    <div class="modal modal-sm">
+      <div class="modal-header">
+        <h3 id="confirm-title">确认</h3>
+      </div>
+      <div class="modal-body">
+        <p id="confirm-text" style="font-size:13px; line-height:1.7;"></p>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-ghost" data-close="confirm-modal">取消</button>
+        <button class="btn btn-primary" id="btn-confirm-ok">确认</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast container -->
+  <div class="toast-container" id="toasts"></div>
+
+  <script src="app.js?v=3"></script>
+</body>
+</html>

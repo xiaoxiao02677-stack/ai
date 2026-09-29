@@ -1,0 +1,42 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>Open-LLM-Vtuber</title>
+    <!-- LAN + HTTPS fix: ALWAYS derive backend WebSocket/Base URL from the current
+         page origin. Overwrites stale cached values (ws:// from the old http era),
+         so wss:// is used on https pages and mixed-content never blocks the socket. -->
+    <script>
+      (function () {
+        try {
+          if (!window.location.host) return;
+          var wsProto = window.location.protocol === "https:" ? "wss:" : "ws:";
+          var wsUrl = wsProto + "//" + window.location.host + "/client-ws";
+          var baseUrl = window.location.origin;
+          window.localStorage.setItem("wsUrl", JSON.stringify(wsUrl));
+          window.localStorage.setItem("baseUrl", JSON.stringify(baseUrl));
+        } catch (e) {}
+      })();
+    </script>
+    <script type="module" crossorigin src="./assets/main-nu7uwxNJ.js"></script>
+    <link rel="stylesheet" crossorigin href="./assets/main-QEkl09-0.css">
+  <!-- VISION_WARN_START -->
+<script id="vision-warn">
+(function(){
+  var RED='#e53e3e';
+  function isCam(s){return !!(s.querySelector && s.querySelector('circle[cx="12"][cy="13"][r="4"]'));}
+  function isMon(s){return !!(s.querySelector && s.querySelector('rect[width="20"][height="14"]'));}
+  function paint(){document.querySelectorAll('svg').forEach(function(s){if(isCam(s)||isMon(s)){s.style.color=RED;}});}
+  paint();
+  if(window.MutationObserver){try{new MutationObserver(paint).observe(document.documentElement,{childList:true,subtree:true});}catch(e){}}
+  window.addEventListener('load',paint);
+  [800,2500,5000].forEach(function(t){setTimeout(paint,t);});
+})();
+</script>
+<!-- VISION_WARN_END -->
+</head>
+
+  <body>
+    <div id="root"></div>
+  </body>
+</html>

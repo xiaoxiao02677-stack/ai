@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Config Panel · Open-LLM-VTuber</title>
+  <link rel="stylesheet" href="style.css" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2360a5fa' stroke-width='2'><circle cx='12' cy='12' r='3'/><path d='M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.01a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h.01a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.01a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z'/></svg>" />
+</head>
+<body>
+  <div id="app">
+    <aside class="sidebar">
+      <div class="sidebar-header">
+        <div class="logo">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
+            <polyline points="3.27 6.96 12 12.01 20.73 6.96"/>
+            <line x1="12" y1="22.08" x2="12" y2="12"/>
+          </svg>
+        </div>
+        <div class="logo-text">
+          <h1>Config Panel</h1>
+          <span class="sub">Open-LLM-VTuber</span>
+        </div>
+      </div>
+      <div class="sidebar-search">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+        <input type="text" id="search" placeholder="搜索配置项..." />
+      </div>
+      <nav class="sidebar-nav" id="nav"></nav>
+      <div class="sidebar-footer">
+        <button class="btn btn-ghost btn-block" id="btn-backups">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>
+          备份管理
+        </button>
+        <a class="btn btn-ghost btn-block" href="/" target="_blank">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+          返回主站
+        </a>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div class="topbar-title">
+          <h2 id="page-title">系统</h2>
+          <p class="page-desc" id="page-desc"></p>
+        </div>
+        <div class="topbar-actions">
+          <button class="btn btn-ghost" id="btn-reload" title="重新加载配置">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+            重载
+          </button>
+          <button class="btn btn-ghost" id="btn-yaml" title="编辑 YAML 源码">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+            YAML
+          </button>
+          <button class="btn btn-primary" id="btn-save" title="保存修改">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+            保存
+          </button>
+        </div>
+      </header>
+
+      <section class="content" id="content">
+        <div class="loading-state">
+          <div class="spinner"></div>
+          <p>正在加载配置…</p>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- YAML editor modal -->
+  <div class="modal-overlay hidden" id="yaml-modal">
+    <div class="modal yaml-modal">
+      <div class="modal-header">
+        <h3>conf.yaml 源码编辑</h3>
+        <div class="modal-header-actions">
+          <button class="btn btn-ghost btn-sm" id="btn-format">格式化</button>
+          <button class="btn btn-danger btn-sm" id="btn-close-yaml">关闭</button>
+        </div>
+      </div>
+      <div class="modal-body">
+        <textarea id="yaml-editor" spellcheck="false"></textarea>
+      </div>
+      <div class="modal-footer">
+        <span class="hint">语法高亮不可用，纯文本编辑。保存前会自动校验并备份。</span>
+        <button class="btn btn-primary" id="btn-save-yaml">校验并保存</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Backups modal -->
+  <div class="modal-overlay hidden" id="backups-modal">
+    <div class="modal">
+      <div class="modal-header">
+        <h3>备份管理</h3>
+        <button class="btn btn-ghost btn-sm" id="btn-close-backups">关闭</button>
+      </div>
+      <div class="modal-body">
+        <div class="backup-list" id="backup-list"></div>
+      </div>
+      <div class="modal-footer">
+        <span class="hint">恢复前会自动备份当前文件。保留最近 30 份。</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast container -->
+  <div class="toast-container" id="toasts"></div>
+
+  <!-- Save-confirm modal -->
+  <div class="modal-overlay hidden" id="save-modal">
+    <div class="modal modal-sm">
+      <div class="modal-header">
+        <h3>保存配置</h3>
+      </div>
+      <div class="modal-body">
+        <p id="save-modal-text">确认保存对配置的修改？保存前自动创建备份。</p>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-ghost" id="btn-cancel-save">取消</button>
+        <button class="btn btn-primary" id="btn-confirm-save">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
