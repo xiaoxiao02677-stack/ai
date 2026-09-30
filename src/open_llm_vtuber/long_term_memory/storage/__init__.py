@@ -1,8 +1,8 @@
-"""Storage subpackage: provider contract + SQLite provider + repositories.
+"""Storage subpackage: provider contract + backends + repositories.
 
-Layering (Phase 2):
+Layering (Phase 3):
 
-    MemoryManager / MemoryRetriever  (business layer, zero SQL)
+    MemoryManager / MemoryRetriever  (business layer, zero SQL, zero backend names)
         ├─ MemoryRepository   — domain rules for memories
         ├─ KeywordRepository  — input normalization for keywords
         ├─ StateRepository    — updated_at stamp for user state
@@ -11,20 +11,23 @@ Layering (Phase 2):
 
     StorageProvider            — the contract (provider.py, aggregate-shaped
                                  Protocol: domain objects in, domain objects out)
-        └─ SQLiteStorageProvider   — the default implementation, and the
-                                     ONLY file in the system containing SQL
+        ├─ SQLiteStorageProvider   — default backend; the only file with SQL
+        └─ HermesStorageProvider   — REST adapter over the Hermes Memory API
+                                     (+ JSON sidecar for LTM-only aggregates)
 
-Repositories depend only on the ``StorageProvider`` Protocol — never on a
-concrete class, a SQL string, a cursor, a lock or a connection.
-
-``create_default_provider`` below is the **composition point** of the whole
-persistence stack: every store above this package obtains its provider
-through it. Swapping the backend (e.g. a future HermesProvider) is a
-one-line change in this factory and touches nothing else in the project.
+``create_storage_provider`` (provider_factory.py) is the **composition
+point**: it reads the backend choice from the LTM config and returns the
+concrete provider. Manager / Store / Repository / Retriever never see a
+backend class name. Adding another backend = one more factory branch.
 """
 
 from .provider import StorageProvider
 from .sqlite_provider import SQLiteStorageProvider
+from .provider_factory import (
+    create_storage_provider,
+    PROVIDER_SQLITE,
+    PROVIDER_HERMES,
+)
 from .repository import (
     MemoryRepository,
     KeywordRepository,
@@ -34,19 +37,21 @@ from .repository import (
 
 
 def create_default_provider(conf_uid: str) -> StorageProvider:
-    """Build the storage backend this build ships with (one per conf_uid).
+    """Backward-compatible default backend (sqlite, no config read).
 
-    The single place a concrete provider is chosen. ``MemoryStore`` and
-    the repositories never name a concrete backend; pointing this factory
-    at another ``StorageProvider`` implementation swaps the whole stack.
+    Kept for callers that predate config-driven selection; the config
+    path goes through ``create_storage_provider(conf_uid, config)``.
     """
-    return SQLiteStorageProvider(conf_uid)
+    return create_storage_provider(conf_uid, {"storage": {"provider": "sqlite"}})
 
 
 __all__ = [
     "StorageProvider",
     "SQLiteStorageProvider",
     "create_default_provider",
+    "create_storage_provider",
+    "PROVIDER_SQLITE",
+    "PROVIDER_HERMES",
     "MemoryRepository",
     "KeywordRepository",
     "StateRepository",

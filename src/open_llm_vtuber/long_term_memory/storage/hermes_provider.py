@@ -1,0 +1,550 @@
+"""Hermes storage provider: adapter over the ai-companion Hermes Memory REST API.
+
+Phase 3 integration. Hermes (as deployed in this project, see
+``/root/桌面/ai-companion`` on the server) is an HTTP service exposing
+``/api/agents/{agent_id}/memories`` (CRUD + vector search + stats) backed
+by PostgreSQL+pgvector. This adapter implements the aggregate
+``StorageProvider`` Protocol (``provider.py``) so the whole LTM stack —
+repositories, retriever, manager, panel — runs unchanged when the factory
+selects ``hermes``.
+
+Design rules (per the Phase-3 spec):
+
+* Only this file may import the Hermes client / know the Hermes API shape.
+  Manager / Store / Repository / Retriever never see Hermes.
+* ``conf_uid`` maps to the Hermes ``agent_id`` namespace; the HTTP header
+  ``X-User-Id`` carries a fixed local user (configurable).
+* ID mapping: local ``memory_id`` (16-hex) <-> Hermes uuid. The mapping is
+  kept in the provider (in-memory dict) **and** round-tripped through the
+  Hermes record ``metadata.ltm`` block, so a provider restart rebuilds the
+  map by listing memories once (lazy, on first id lookup).
+* Capability differences are explicit, never silent:
+
+    - ``keywords`` / ``user_state`` / ``summary`` / ``turn_count`` have no
+      Hermes counterpart. They are LTM-domain aggregates, not memory rows,
+      so the provider persists them in a small sidecar store (a JSON file
+      next to the LTM data dir, one per conf_uid). This is a
+      provider-internal implementation detail; the Protocol surface is
+      identical to SQLite's.
+    - ``mark_used`` cannot bump Hermes ``access_count`` directly (Hermes
+      only counts search hits). The provider keeps ``use_count`` /
+      ``last_used_at`` in the sidecar and stamps them onto records on
+      read, preserving LTM scoring semantics.
+    - ``find_active_by_content`` / ``count_memories(status)``: emulated
+      via list + client-side filtering (dataset is per-character small).
+
+* Status mapping: LTM ``deprecated`` <-> Hermes ``superseded`` (lifecycle
+  transition ``active -> superseded`` is legal on the Hermes side).
+* Errors: transport failures raise ``HermesUnavailableError``; the module
+  import failure (httpx missing) raises at factory time with a clear
+  message. No silent fallback to SQLite — the factory only swaps when the
+  config says so, and an unhealthy Hermes surfaces as explicit errors in
+  ``[LTM]`` logs (the manager layer already degrades gracefully).
+"""
+
+import json
+import os
+import threading
+import time
+import uuid
+from typing import Any, Dict, List, Optional, Sequence
+
+from loguru import logger
+
+from ..schemas import KeywordRecord, MemoryRecord, UserState
+
+try:  # the HTTP client is the single Hermes-facing dependency
+    import httpx
+except ImportError:  # pragma: no cover - factory reports this clearly
+    httpx = None  # type: ignore[assignment]
+
+
+class HermesUnavailableError(RuntimeError):
+    """Hermes API unreachable / errored. Surfaced explicitly, never swallowed."""
+
+
+# LTM status <-> Hermes lifecycle status. LTM only has active/deprecated;
+# Hermes additionally has expired/archived/deleted. Records in those
+# terminal/hidden states are surfaced as LTM "deprecated" (never active),
+# so retrieval/dedup correctly ignores them.
+_STATUS_TO_HERMES = {"active": "active", "deprecated": "superseded"}
+_STATUS_FROM_HERMES = {
+    "active": "active",
+    "superseded": "deprecated",
+    "expired": "deprecated",
+    "archived": "deprecated",
+    "deleted": "deprecated",
+}
+# Hermes statuses that make a record invisible to LTM entirely (deleted
+# is a soft-delete tombstone — get_memory must report it as gone)
+_HIDDEN_HERMES_STATUS = {"deleted"}
+
+# Hermes memory_type vocabulary (ai_companion MemoryType enum). LTM types
+# that have no direct Hermes counterpart land on the closest bucket and
+# keep the exact LTM type inside the metadata block for round-tripping.
+_TYPE_TO_HERMES = {
+    "identity": "profile",
+    "preference": "preference",
+    "habit": "profile",
+    "experience": "episodic",
+    "goal": "semantic",
+    "fact": "semantic",
+    "event": "episodic",
+    "relationship": "relationship",
+}
+
+
+class _Sidecar:
+    """Tiny JSON store for LTM-domain aggregates Hermes has no concept of
+    (keywords / user_state / summary / turn_count / use stats).
+
+    One file per conf_uid under the LTM data dir; single-writer lock;
+    write-through persistence so a provider restart loses nothing.
+    """
+
+    def __init__(self, conf_uid: str):
+        data_dir = os.path.join(os.getcwd(), "long_term_memory_data")
+        os.makedirs(data_dir, exist_ok=True)
+        safe = "".join(c for c in conf_uid if c.isalnum() or c in "-_")
+        self._path = os.path.join(data_dir, f"{safe}.hermes_sidecar.json")
+        self._lock = threading.Lock()
+        self._data: Dict[str, Any] = {
+            "id_map": {},        # local memory_id -> hermes uuid
+            "rev_map": {},       # hermes uuid -> local memory_id
+            "use_stats": {},     # local memory_id -> {use_count, last_used_at}
+            "keywords": [],      # [{keyword, category, hit_count, first, last}]
+            "state": None,       # UserState dict or None
+            "summary": "",
+            "turn_count": 0,
+        }
+        self._load()
+
+    def _load(self) -> None:
+        try:
+            if os.path.exists(self._path):
+                with open(self._path, "r", encoding="utf-8") as f:
+                    loaded = json.load(f)
+                for k in self._data:
+                    if k in loaded:
+                        self._data[k] = loaded[k]
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"[LTM][hermes] sidecar load failed: {e}")
+
+    def _flush(self) -> None:
+        tmp = self._path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(self._data, f, ensure_ascii=False)
+        os.replace(tmp, self._path)
+
+    # -- id mapping ----------------------------------------------------------
+
+    def map_id(self, local_id: str, hermes_id: str) -> None:
+        with self._lock:
+            self._data["id_map"][local_id] = hermes_id
+            self._data["rev_map"][hermes_id] = local_id
+            self._flush()
+
+    def hermes_id_of(self, local_id: str) -> Optional[str]:
+        with self._lock:
+            return self._data["id_map"].get(local_id)
+
+    def local_id_of(self, hermes_id: str) -> Optional[str]:
+        with self._lock:
+            return self._data["rev_map"].get(hermes_id)
+
+    def drop_id(self, local_id: str) -> None:
+        with self._lock:
+            hid = self._data["id_map"].pop(local_id, None)
+            if hid:
+                self._data["rev_map"].pop(hid, None)
+            self._data["use_stats"].pop(local_id, None)
+            self._flush()
+
+    # -- use stats (mark_used) ------------------------------------------------
+
+    def bump_used(self, local_ids: Sequence[str]) -> None:
+        now = time.time()
+        with self._lock:
+            for mid in local_ids:
+                st = self._data["use_stats"].setdefault(
+                    mid, {"use_count": 0, "last_used_at": now})
+                st["use_count"] += 1
+                st["last_used_at"] = now
+            self._flush()
+
+    def use_stats(self, local_id: str) -> Dict[str, Any]:
+        with self._lock:
+            return dict(self._data["use_stats"].get(local_id)
+                        or {"use_count": 0, "last_used_at": 0.0})
+
+    # -- keywords -------------------------------------------------------------
+
+    def upsert_keyword(self, keyword: str, category: str) -> None:
+        now = time.time()
+        with self._lock:
+            for k in self._data["keywords"]:
+                if k["keyword"] == keyword and k["category"] == category:
+                    k["hit_count"] += 1
+                    k["last"] = now
+                    self._flush()
+                    return
+            self._data["keywords"].append(
+                {"keyword": keyword, "category": category, "hit_count": 1,
+                 "first": now, "last": now})
+            self._flush()
+
+    def list_keywords(self, limit: int) -> List[Dict[str, Any]]:
+        with self._lock:
+            kws = list(self._data["keywords"])
+        kws.sort(key=lambda k: (-k["hit_count"], -k["last"]))
+        return kws[:limit]
+
+    def delete_keyword(self, keyword: str, category: str) -> bool:
+        with self._lock:
+            before = len(self._data["keywords"])
+            self._data["keywords"] = [
+                k for k in self._data["keywords"]
+                if not (k["keyword"] == keyword and k["category"] == category)]
+            changed = len(self._data["keywords"]) != before
+            if changed:
+                self._flush()
+        return changed
+
+    def count_keywords(self) -> int:
+        with self._lock:
+            return len(self._data["keywords"])
+
+    # -- state / summary / turns -----------------------------------------------
+
+    def get_state(self) -> Optional[Dict[str, Any]]:
+        with self._lock:
+            return self._data["state"]
+
+    def save_state(self, state: Dict[str, Any]) -> None:
+        with self._lock:
+            self._data["state"] = state
+            self._flush()
+
+    def get_summary(self) -> str:
+        with self._lock:
+            return self._data["summary"]
+
+    def save_summary(self, text: str, turn_count: int) -> None:
+        with self._lock:
+            self._data["summary"] = text
+            self._data["turn_count"] = turn_count
+            self._flush()
+
+    def get_turn_count(self) -> int:
+        with self._lock:
+            return int(self._data["turn_count"])
+
+    def bump_turn_count(self) -> int:
+        with self._lock:
+            self._data["turn_count"] = int(self._data["turn_count"]) + 1
+            self._flush()
+            return self._data["turn_count"]
+
+
+class HermesStorageProvider:
+    """``StorageProvider`` Protocol implementation backed by the Hermes
+    Memory REST API (+ a JSON sidecar for LTM-only aggregates).
+
+    Construct via the factory (``provider_factory.create_storage_provider``)
+    with a ``hermes`` config block; never instantiate by hand in business
+    code.
+    """
+
+    def __init__(self, conf_uid: str, *, base_url: str,
+                 user_id: str = "vtuber", timeout: float = 10.0,
+                 api_key: Optional[str] = None):
+        if httpx is None:
+            raise HermesUnavailableError(
+                "hermes provider requires the httpx package "
+                "(uv add httpx / pip install httpx)")
+        self.conf_uid = conf_uid
+        self.db_path = f"hermes://{base_url}/agents/{conf_uid}"
+        self._base_url = base_url.rstrip("/")
+        self._agent_path = f"/api/agents/{conf_uid}/memories"
+        self._user_id = user_id or "vtuber"
+        self._timeout = timeout
+        self._headers: Dict[str, str] = {"X-User-Id": self._user_id}
+        if api_key:
+            # auth token from env/config only; never logged
+            self._headers["Authorization"] = f"Bearer {api_key}"
+        self._client = httpx.Client(
+            base_url=self._base_url, timeout=self._timeout,
+            headers=self._headers)
+        self._sidecar = _Sidecar(conf_uid)
+        self._id_map_synced = False
+        logger.info(
+            f"[LTM] HermesStorageProvider ready (agent={conf_uid}, "
+            f"user={self._user_id}, endpoint={base_url})")
+
+    # -- transport ------------------------------------------------------------
+
+    def _request(self, method: str, path: str, *,
+                 json_body: Any = None, params: Any = None) -> Any:
+        try:
+            r = self._client.request(method, path, json=json_body,
+                                     params=params)
+            r.raise_for_status()
+        except httpx.HTTPError as e:
+            raise HermesUnavailableError(
+                f"hermes {method} {path} failed: {e}") from e
+        if r.status_code == 204 or not r.content:
+            return None
+        return r.json()
+
+    # -- id mapping -----------------------------------------------------------
+
+    def _ensure_id_map(self) -> None:
+        """Rebuild local<->hermes id maps from Hermes metadata (once per
+        process; the sidecar usually already has it after the first run)."""
+        if self._id_map_synced:
+            return
+        page = 0
+        while True:
+            batch = self._request(
+                "GET", self._agent_path,
+                params={"limit": 200, "offset": page * 200}) or {}
+            items = batch.get("items", [])
+            for it in items:
+                hid = it.get("id", "")
+                ltm = (it.get("metadata") or {}).get("ltm") or {}
+                local_id = ltm.get("memory_id")
+                if hid and local_id and self._sidecar.local_id_of(hid) is None:
+                    self._sidecar.map_id(local_id, hid)
+            if len(items) < 200:
+                break
+            page += 1
+        self._id_map_synced = True
+
+    # -- record mapping ---------------------------------------------------------
+
+    @staticmethod
+    def _ltm_meta(record: MemoryRecord) -> Dict[str, Any]:
+        """The metadata block preserving LTM fields Hermes has no column for."""
+        return {
+            "memory_id": record.memory_id,
+            "ltm_type": record.memory_type,
+            "keywords": record.keywords,
+            "source_history_uid": record.source_history_uid,
+            "use_count": record.use_count,
+            "created_at": record.created_at,
+            "history": record.history,
+        }
+
+    def _to_hermes_payload(self, record: MemoryRecord) -> Dict[str, Any]:
+        return {
+            "content": record.content,
+            "memory_type": _TYPE_TO_HERMES.get(record.memory_type, "semantic"),
+            "importance": record.importance,
+            "confidence": record.confidence,
+            "source": "conversation",
+            "metadata": {"ltm": self._ltm_meta(record)},
+        }
+
+    def _from_hermes(self, item: Dict[str, Any]) -> MemoryRecord:
+        ltm = (item.get("metadata") or {}).get("ltm") or {}
+        local_id = ltm.get("memory_id") or item.get("id", "")
+        use = self._sidecar.use_stats(local_id)
+        created_at = _parse_ts(item.get("created_at")) or float(
+            ltm.get("created_at") or 0.0)
+        return MemoryRecord(
+            memory_id=local_id,
+            conf_uid=self.conf_uid,
+            memory_type=ltm.get("ltm_type") or item.get("memory_type") or "fact",
+            content=item.get("content", ""),
+            keywords=list(ltm.get("keywords") or []),
+            source_history_uid=str(ltm.get("source_history_uid") or ""),
+            importance=float(item.get("importance", 0.5)),
+            confidence=float(item.get("confidence", 0.8)),
+            status=_STATUS_FROM_HERMES.get(item.get("status", "active"),
+                                           "active"),
+            use_count=int(use.get("use_count", ltm.get("use_count", 0))),
+            created_at=created_at,
+            updated_at=_parse_ts(item.get("updated_at")) or 0.0,
+            last_used_at=float(use.get("last_used_at", 0.0)),
+            history=list(ltm.get("history") or []),
+        )
+
+    # -- memories aggregate ------------------------------------------------------
+
+    def save_memory(self, record: MemoryRecord) -> None:
+        hid = self._sidecar.hermes_id_of(record.memory_id)
+        if hid is None:
+            self._ensure_id_map()
+            hid = self._sidecar.hermes_id_of(record.memory_id)
+        if hid is None:
+            created = self._request(
+                "POST", self._agent_path,
+                json_body=self._to_hermes_payload(record))
+            self._sidecar.map_id(record.memory_id, created["id"])
+        else:
+            # PATCH: content/importance/confidence/metadata; status via
+            # lifecycle-legal transitions only
+            current = self._request("GET", f"{self._agent_path}/{hid}")
+            cur_status = current.get("status", "active")
+            new_status = _STATUS_TO_HERMES.get(record.status, "active")
+            body: Dict[str, Any] = {
+                "content": record.content,
+                "importance": record.importance,
+                "confidence": record.confidence,
+                "metadata": {"ltm": self._ltm_meta(record)},
+            }
+            if new_status != cur_status:
+                body["status"] = new_status
+            try:
+                self._request("PATCH", f"{self._agent_path}/{hid}",
+                              json_body=body)
+            except HermesUnavailableError:
+                # illegal lifecycle transition (e.g. superseded -> active)
+                # — retry as pure field update, keeping Hermes status law
+                body.pop("status", None)
+                self._request("PATCH", f"{self._agent_path}/{hid}",
+                              json_body=body)
+                logger.warning(
+                    f"[LTM][hermes] status {cur_status}->{new_status} not "
+                    f"lifecycle-legal; field update only "
+                    f"(memory {record.memory_id})")
+
+    def get_memory(self, memory_id: str) -> Optional[MemoryRecord]:
+        self._ensure_id_map()
+        hid = self._sidecar.hermes_id_of(memory_id)
+        if hid is None:
+            return None
+        try:
+            item = self._request("GET", f"{self._agent_path}/{hid}")
+        except HermesUnavailableError as e:
+            if "404" in str(e):
+                return None
+            raise
+        if item.get("status") in _HIDDEN_HERMES_STATUS:
+            return None
+        return self._from_hermes(item)
+
+    def list_memories(
+        self, status: str = "active", memory_type: Optional[str] = None
+    ) -> List[MemoryRecord]:
+        recs = self._list_all()
+        out = [r for r in recs if r.status == status]
+        if memory_type:
+            out = [r for r in out if r.memory_type == memory_type]
+        out.sort(key=lambda r: (-r.importance, -r.updated_at))
+        return out
+
+    def list_all_memories(self) -> List[MemoryRecord]:
+        recs = self._list_all()
+        recs.sort(key=lambda r: (r.status, -r.importance, -r.updated_at))
+        return recs
+
+    def _list_all(self) -> List[MemoryRecord]:
+        self._ensure_id_map()
+        out: List[MemoryRecord] = []
+        page = 0
+        while True:
+            batch = self._request(
+                "GET", self._agent_path,
+                params={"limit": 200, "offset": page * 200}) or {}
+            items = batch.get("items", [])
+            out.extend(
+                self._from_hermes(it) for it in items
+                if it.get("status") not in _HIDDEN_HERMES_STATUS)
+            if len(items) < 200:
+                break
+            page += 1
+        return out
+
+    def delete_memory(self, memory_id: str) -> bool:
+        self._ensure_id_map()
+        hid = self._sidecar.hermes_id_of(memory_id)
+        if hid is None:
+            return False
+        try:
+            self._request("DELETE", f"{self._agent_path}/{hid}")
+        except HermesUnavailableError as e:
+            if "404" in str(e):
+                return False
+            raise
+        # Hermes soft-deletes (status=deleted); drop the id mapping so the
+        # record reads as fully gone on the LTM side
+        self._sidecar.drop_id(memory_id)
+        return True
+
+    def find_active_by_content(self, content: str) -> Optional[MemoryRecord]:
+        for rec in self.list_memories(status="active"):
+            if rec.content == content:
+                return rec
+        return None
+
+    def count_memories(self, status: str = "active") -> int:
+        return len(self.list_memories(status=status))
+
+    def mark_used(self, memory_ids: Sequence[str]) -> None:
+        # Hermes counts only search hits (access_count); LTM use stats live
+        # in the sidecar so scoring semantics stay identical
+        self._sidecar.bump_used(memory_ids)
+
+    # -- keywords aggregate --------------------------------------------------------
+
+    def upsert_keyword(self, keyword: str, category: str) -> None:
+        self._sidecar.upsert_keyword(keyword, category)
+
+    def list_keywords(self, limit: int = 200) -> List[KeywordRecord]:
+        return [
+            KeywordRecord(
+                keyword=k["keyword"], category=k["category"],
+                conf_uid=self.conf_uid, hit_count=k["hit_count"],
+                first_seen_at=k["first"], last_seen_at=k["last"])
+            for k in self._sidecar.list_keywords(limit)
+        ]
+
+    def delete_keyword(self, keyword: str, category: str) -> bool:
+        return self._sidecar.delete_keyword(keyword, category)
+
+    def count_keywords(self) -> int:
+        return self._sidecar.count_keywords()
+
+    # -- user state aggregate --------------------------------------------------------
+
+    def get_state(self) -> Optional[UserState]:
+        d = self._sidecar.get_state()
+        return UserState.from_dict(d) if d else None
+
+    def save_state(self, state: UserState) -> None:
+        self._sidecar.save_state(state.to_dict())
+
+    # -- summary aggregate ------------------------------------------------------------
+
+    def get_summary(self) -> str:
+        return self._sidecar.get_summary()
+
+    def save_summary(self, text: str, turn_count: int) -> None:
+        self._sidecar.save_summary(text, turn_count)
+
+    def get_turn_count(self) -> int:
+        return self._sidecar.get_turn_count()
+
+    def bump_turn_count(self) -> int:
+        return self._sidecar.bump_turn_count()
+
+    # -- lifecycle ----------------------------------------------------------------------
+
+    def close(self) -> None:
+        try:
+            self._client.close()
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"[LTM][hermes] close error: {e}")
+
+
+def _parse_ts(value: Any) -> float:
+    """ISO-8601 (Hermes) -> epoch seconds; 0.0 when absent/unparseable."""
+    if not value:
+        return 0.0
+    try:
+        from datetime import datetime
+        s = str(value).replace("Z", "+00:00")
+        return datetime.fromisoformat(s).timestamp()
+    except Exception:  # noqa: BLE001
+        return 0.0

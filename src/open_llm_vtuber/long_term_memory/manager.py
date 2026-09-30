@@ -31,7 +31,9 @@ class MemoryManager:
         self.conf_uid = conf_uid
         self.config = config
         self.llm = llm
-        self.store = MemoryStore(conf_uid)
+        # config flows into the store so the configured storage backend
+        # (storage.provider: sqlite | hermes) is honored per deployment
+        self.store = MemoryStore(conf_uid, config=config)
         self.extractor = LLMExtractor(config, llm)
         self.deduplicator = MemoryDeduplicator()
         self.conflict_resolver = MemoryConflictResolver()

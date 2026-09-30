@@ -88,6 +88,17 @@ _DEFAULT_CONFIG: Dict[str, Any] = {
     },
     # debug
     "memory_debug": True,
+    # storage backend: "sqlite" (default) | "hermes" (REST adapter over
+    # the ai-companion Hermes Memory API; see storage/provider_factory.py)
+    "storage": {
+        "provider": "sqlite",
+        "hermes": {
+            "base_url": "http://127.0.0.1:12396",
+            "user_id": "vtuber",
+            "timeout": 10.0,
+            # api_key 从环境变量 LTM_HERMES_API_KEY 读取, 不落盘
+        },
+    },
 }
 
 _managers: Dict[str, "MemoryManager"] = {}

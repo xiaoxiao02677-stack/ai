@@ -50,12 +50,14 @@ for pkg, src in ((PKG2, SRC2), (PKG1, SRC1B)):
     shutil.copy(SCHEMAS if pkg == PKG1 else os.path.join(src, "schemas.py"),
                 os.path.join(pkg, "schemas.py"))
     shutil.copy(os.path.join(src, "store.py"), os.path.join(pkg, "store.py"))
-    for rel in ["provider.py", "sqlite_provider.py", "__init__.py"]:
-        shutil.copy(os.path.join(src, "storage", rel), os.path.join(pkg, "storage", rel))
+    storage_files = ["provider.py", "sqlite_provider.py", "__init__.py"]
     if pkg == PKG2:
-        shutil.copy(os.path.join(src, "storage", "repository.py"),
-                    os.path.join(pkg, "storage", "repository.py"))
-    else:
+        # Phase-3 layout: config-driven factory + hermes adapter
+        storage_files += ["provider_factory.py", "hermes_provider.py",
+                          "repository.py"]
+    for rel in storage_files:
+        shutil.copy(os.path.join(src, "storage", rel), os.path.join(pkg, "storage", rel))
+    if pkg == PKG1:
         for rel in ["memory_repository.py", "state_repository.py",
                     "summary_repository.py", "keyword_repository.py"]:
             shutil.copy(os.path.join(src, "storage", rel), os.path.join(pkg, "storage", rel))
@@ -344,15 +346,16 @@ fake = FakeStorageProvider("fake_conf")
 check("FakeStorageProvider isinstance StorageProvider", isinstance(fake, StorageProvider))
 
 # swap in at the composition point — the production path now goes through
-# storage.create_default_provider; monkeypatch it and build a REAL
-# MemoryStore (no __new__ bypass): proves the whole stack runs on a
-# backend with zero SQL, and that the factory is the only switch to flip
+# storage.create_storage_provider(conf_uid, config); monkeypatch it and
+# build a REAL MemoryStore (no __new__ bypass): proves the whole stack
+# runs on a backend with zero SQL, and that the factory is the only
+# switch to flip
 import ltm2.storage as storage_pkg  # noqa: E402
 fake2 = FakeStorageProvider("fake_conf2")
-_orig_factory = storage_pkg.create_default_provider
-storage_pkg.create_default_provider = lambda conf_uid: fake2
+_orig_factory = storage_pkg.create_storage_provider
+storage_pkg.create_storage_provider = lambda conf_uid, config=None: fake2
 fstore = MemoryStore("fake_conf2")
-storage_pkg.create_default_provider = _orig_factory
+storage_pkg.create_storage_provider = _orig_factory
 check("store built via factory swap", fstore.provider is fake2)
 
 fr = MemoryRecord.new("fake_conf2", "preference", "用户喜欢吃火锅", ["火锅"], 0.85, 0.9)
@@ -497,6 +500,7 @@ _BOUNDARY_FILES = [
     "deduplicator.py", "extractor.py", "keyword_extractor.py",
     "prompt_builder.py", "privacy.py",
     "storage/provider.py", "storage/repository.py", "storage/__init__.py",
+    "storage/provider_factory.py",
 ]
 _BOUNDARY_KW = _re.compile(
     # storage-tech nouns: any case, word-bounded
@@ -543,6 +547,11 @@ for rel in _BOUNDARY_FILES:
 # word list (recognizing "我会SQL" utterances) — that's user-domain data,
 # not a storage reference; drop it from the report before asserting
 violations.pop("keyword_extractor.py", None)
+# provider_factory.py / storage __init__ legitimately contain backend
+# selection strings ("sqlite" / "hermes") — the factory IS the config
+# layer, allowed to know provider names per acceptance §23
+violations.pop("storage/provider_factory.py", None)
+violations.pop("storage/__init__.py", None)
 check("business layer code has zero storage-tech references", not violations,
       str(violations))
 

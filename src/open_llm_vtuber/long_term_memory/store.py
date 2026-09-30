@@ -38,13 +38,17 @@ class MemoryStore(MemoryRepository):
 
     Wiring + delegation only; the storage subpackage owns the backend
     choice, all persistence semantics and every implementation detail.
+
+    ``config`` (optional, the LTM module config) selects the backend via
+    ``storage.create_storage_provider``; omitted/None keeps the default
+    sqlite backend — existing callers behave exactly as before.
     """
 
-    def __init__(self, conf_uid: str):
+    def __init__(self, conf_uid: str, config: "dict | None" = None):
         # backend choice lives behind the storage package's factory —
         # resolved through the module attribute so swapping the whole
         # stack (including from tests) is a one-line change there
-        self.provider = storage.create_default_provider(conf_uid)
+        self.provider = storage.create_storage_provider(conf_uid, config)
         self.memories = MemoryRepository(self.provider)
         self.state_repo = StateRepository(self.provider)
         self.summary_repo = SummaryRepository(self.provider)
