@@ -435,6 +435,41 @@ class FakeStorageProvider:
             self._ck()
             return len(getattr(self, "_lessons", {}))
 
+    # Phase 7: strategies aggregate (minimal in-memory implementation so
+    # the fake keeps satisfying the extended StorageProvider protocol)
+    def save_strategy(self, record):
+        with self._lock:
+            self._ck()
+            self._strategies = getattr(self, "_strategies", {})
+            self._strategies[record.strategy_id] = record
+
+    def get_strategy(self, strategy_id):
+        with self._lock:
+            self._ck()
+            return getattr(self, "_strategies", {}).get(strategy_id)
+
+    def list_strategies(self, limit=200):
+        with self._lock:
+            self._ck()
+            out = list(getattr(self, "_strategies", {}).values())
+        out.sort(key=lambda r: -r.created_at)
+        return out[:limit]
+
+    def list_strategies_by_lesson(self, lesson_id):
+        return [r for r in self.list_strategies(limit=10000)
+                if lesson_id in r.source_lesson_ids]
+
+    def delete_strategy(self, strategy_id):
+        with self._lock:
+            self._ck()
+            sts = getattr(self, "_strategies", {})
+            return sts.pop(strategy_id, None) is not None
+
+    def count_strategies(self):
+        with self._lock:
+            self._ck()
+            return len(getattr(self, "_strategies", {}))
+
     def close(self):
         self.closed = True
 

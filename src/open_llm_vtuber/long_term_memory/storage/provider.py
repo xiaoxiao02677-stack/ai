@@ -39,10 +39,11 @@ from typing import TYPE_CHECKING, Any, List, Optional, Protocol, Sequence, runti
 
 from ..schemas import KeywordRecord, MemoryRecord, UserState
 
-if TYPE_CHECKING:  # Phase-4/5/6 domain objects; runtime typing stays loose
+if TYPE_CHECKING:  # Phase-4..7 domain objects; runtime typing stays loose
     from ...experience.schemas import ExperienceRecord
     from ...reflection.schemas import ReflectionRecord
     from ...lesson.schemas import LessonRecord
+    from ...strategy.schemas import StrategyRecord
 
 
 @runtime_checkable
@@ -221,6 +222,33 @@ class StorageProvider(Protocol):
 
     def count_lessons(self) -> int:
         """Count lessons for this conf_uid."""
+        ...
+
+    # -- strategies aggregate (Phase 7) ----------------------------------------------
+
+    def save_strategy(self, record: "StrategyRecord") -> None:
+        """Insert or overwrite a strategy record keyed by its
+        ``strategy_id`` (StrategyRecord domain object)."""
+        ...
+
+    def get_strategy(self, strategy_id: str) -> Optional["StrategyRecord"]:
+        """Fetch one strategy by id, or ``None``."""
+        ...
+
+    def list_strategies(self, limit: int = 200) -> List["StrategyRecord"]:
+        """Strategies for this conf_uid, newest first."""
+        ...
+
+    def list_strategies_by_lesson(self, lesson_id: str) -> List["StrategyRecord"]:
+        """Strategies derived from the given lesson record."""
+        ...
+
+    def delete_strategy(self, strategy_id: str) -> bool:
+        """Delete one strategy. True when a row was removed."""
+        ...
+
+    def count_strategies(self) -> int:
+        """Count strategies for this conf_uid."""
         ...
 
     # -- lifecycle -------------------------------------------------------------

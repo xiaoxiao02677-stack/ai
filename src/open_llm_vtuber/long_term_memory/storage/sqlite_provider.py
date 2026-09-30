@@ -189,6 +189,27 @@ class SQLiteStorageProvider:
             self._conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_lsn_conf ON lessons(conf_uid, created_at)"
             )
+            # Phase 7: condition->recommendation guidelines from lessons
+            # (additive — existing .db files gain the table on next open)
+            self._conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS strategies (
+                    strategy_id TEXT PRIMARY KEY,
+                    conf_uid TEXT NOT NULL,
+                    source_lesson_ids TEXT NOT NULL DEFAULT '[]',
+                    condition TEXT DEFAULT '',
+                    recommendation TEXT DEFAULT '',
+                    evidence TEXT NOT NULL DEFAULT '[]',
+                    confidence REAL DEFAULT 0.5,
+                    metadata TEXT NOT NULL DEFAULT '{}',
+                    created_at REAL DEFAULT 0,
+                    updated_at REAL DEFAULT 0
+                )
+                """
+            )
+            self._conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_str_conf ON strategies(conf_uid, created_at)"
+            )
 
     # -- private row mappers ----------------------------------------------------
 
@@ -628,6 +649,68 @@ class SQLiteStorageProvider:
             ).fetchone()
         return int(row["cnt"]) if row else 0
 
+    # -- strategies aggregate (Phase 7) ---------------------------------------------
+
+    def save_strategy(self, record) -> None:
+        with self._lock, self._conn:
+            self._conn.execute(
+                """
+                INSERT OR REPLACE INTO strategies
+                (strategy_id, conf_uid, source_lesson_ids, condition,
+                 recommendation, evidence, confidence, metadata,
+                 created_at, updated_at)
+                VALUES (?,?,?,?,?,?,?,?,?,?)
+                """,
+                (
+                    record.strategy_id,
+                    record.conf_uid,
+                    json.dumps(record.source_lesson_ids, ensure_ascii=False),
+                    record.condition,
+                    record.recommendation,
+                    json.dumps(record.evidence, ensure_ascii=False),
+                    record.confidence,
+                    json.dumps(record.metadata, ensure_ascii=False),
+                    record.created_at,
+                    record.updated_at,
+                ),
+            )
+
+    def get_strategy(self, strategy_id: str):
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM strategies WHERE strategy_id=?", (strategy_id,)
+            ).fetchone()
+        return _strategy_from_row(row) if row else None
+
+    def list_strategies(self, limit: int = 200) -> List:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM strategies WHERE conf_uid=? "
+                "ORDER BY created_at DESC LIMIT ?",
+                (self.conf_uid, limit),
+            ).fetchall()
+        return [_strategy_from_row(r) for r in rows]
+
+    def list_strategies_by_lesson(self, lesson_id: str) -> List:
+        rows = self.list_strategies(limit=10000)
+        return [r for r in rows if lesson_id in r.source_lesson_ids]
+
+    def delete_strategy(self, strategy_id: str) -> bool:
+        with self._lock, self._conn:
+            affected = self._conn.execute(
+                "DELETE FROM strategies WHERE strategy_id=? AND conf_uid=?",
+                (strategy_id, self.conf_uid),
+            ).rowcount
+        return affected > 0
+
+    def count_strategies(self) -> int:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT COUNT(*) AS cnt FROM strategies WHERE conf_uid=?",
+                (self.conf_uid,),
+            ).fetchone()
+        return int(row["cnt"]) if row else 0
+
     # -- lifecycle -------------------------------------------------------------
 
     def close(self) -> None:
@@ -690,6 +773,24 @@ def _lesson_from_row(row: sqlite3.Row):
         conf_uid=row["conf_uid"],
         source_reflection_ids=json.loads(row["source_reflection_ids"] or "[]"),
         lesson=row["lesson"] or "",
+        confidence=float(row["confidence"] or 0.5),
+        metadata=json.loads(row["metadata"] or "{}"),
+        created_at=float(row["created_at"] or 0.0),
+        updated_at=float(row["updated_at"] or 0.0),
+    )
+
+
+def _strategy_from_row(row: sqlite3.Row):
+    """sqlite Row -> StrategyRecord (lazy import, same cycle reason)."""
+    from ...strategy.schemas import StrategyRecord  # noqa: PLC0415
+
+    return StrategyRecord(
+        strategy_id=row["strategy_id"],
+        conf_uid=row["conf_uid"],
+        source_lesson_ids=json.loads(row["source_lesson_ids"] or "[]"),
+        condition=row["condition"] or "",
+        recommendation=row["recommendation"] or "",
+        evidence=json.loads(row["evidence"] or "[]"),
         confidence=float(row["confidence"] or 0.5),
         metadata=json.loads(row["metadata"] or "{}"),
         created_at=float(row["created_at"] or 0.0),

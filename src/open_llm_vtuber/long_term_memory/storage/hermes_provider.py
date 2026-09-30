@@ -119,6 +119,7 @@ class _Sidecar:
             "experiences": [],   # Phase 4: ExperienceRecord dicts (LTM-only aggregate)
             "reflections": [],   # Phase 5: ReflectionRecord dicts (LTM-only aggregate)
             "lessons": [],        # Phase 6: LessonRecord dicts (LTM-only aggregate)
+            "strategies": [],     # Phase 7: StrategyRecord dicts (LTM-only aggregate)
         }
         self._load()
 
@@ -350,6 +351,40 @@ class _Sidecar:
     def count_lessons(self) -> int:
         with self._lock:
             return len(self._data["lessons"])
+
+    # -- strategies (Phase 7) ---------------------------------------------------------
+
+    def save_strategy(self, record_dict: Dict[str, Any]) -> None:
+        with self._lock:
+            sts = self._data["strategies"]
+            for i, s in enumerate(sts):
+                if s.get("strategy_id") == record_dict["strategy_id"]:
+                    sts[i] = record_dict   # overwrite (update path)
+                    self._flush()
+                    return
+            sts.append(record_dict)
+            self._flush()
+
+    def list_strategies(self, limit: int = 200) -> List[Dict[str, Any]]:
+        with self._lock:
+            out = list(self._data["strategies"])
+        out.sort(key=lambda s: -(s.get("created_at") or 0.0))
+        return out[:limit]
+
+    def delete_strategy(self, strategy_id: str) -> bool:
+        with self._lock:
+            before = len(self._data["strategies"])
+            self._data["strategies"] = [
+                s for s in self._data["strategies"]
+                if s.get("strategy_id") != strategy_id]
+            changed = len(self._data["strategies"]) != before
+            if changed:
+                self._flush()
+        return changed
+
+    def count_strategies(self) -> int:
+        with self._lock:
+            return len(self._data["strategies"])
 
 
 class HermesStorageProvider:
@@ -735,6 +770,35 @@ class HermesStorageProvider:
 
     def count_lessons(self) -> int:
         return self._sidecar.count_lessons()
+
+    # -- strategies aggregate (Phase 7) ----------------------------------------------
+
+    def save_strategy(self, record) -> None:
+        # Hermes has no strategy concept; strategies are an LTM-domain
+        # aggregate persisted in the sidecar (same pattern as lessons)
+        self._sidecar.save_strategy(record.to_dict())
+
+    def get_strategy(self, strategy_id: str):
+        from ...strategy.schemas import StrategyRecord  # lazy: avoid cycle
+        for d in self._sidecar.list_strategies(limit=10000):
+            if d.get("strategy_id") == strategy_id:
+                return StrategyRecord.from_dict(d)
+        return None
+
+    def list_strategies(self, limit: int = 200) -> List:
+        from ...strategy.schemas import StrategyRecord  # lazy: avoid cycle
+        return [StrategyRecord.from_dict(d)
+                for d in self._sidecar.list_strategies(limit=limit)]
+
+    def list_strategies_by_lesson(self, lesson_id: str) -> List:
+        out = self.list_strategies(limit=10000)
+        return [r for r in out if lesson_id in r.source_lesson_ids]
+
+    def delete_strategy(self, strategy_id: str) -> bool:
+        return self._sidecar.delete_strategy(strategy_id)
+
+    def count_strategies(self) -> int:
+        return self._sidecar.count_strategies()
 
     # -- lifecycle ----------------------------------------------------------------------
 
