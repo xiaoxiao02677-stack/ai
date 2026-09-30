@@ -360,10 +360,11 @@ fake_server = FakeHermesServer()
 def make_hermes_mock(conf):
     transport = httpx.MockTransport(fake_server.handler)
     prov = HermesStorageProvider.__new__(HermesStorageProvider)
-    # construct without touching network-facing __init__ side effects
+    # construct without touching network-facing __init__ side effects;
+    # verify=False because the mock has no /api/health route
     HermesStorageProvider.__init__(
         prov, conf, base_url="http://hermes.test",
-        user_id="vtuber", timeout=5.0)
+        user_id="vtuber", timeout=5.0, verify=False)
     # swap in the mock transport (rebuild the client on it)
     prov._client = httpx.Client(
         base_url="http://hermes.test", timeout=5.0,
@@ -425,10 +426,20 @@ check("factory default is sqlite",
       type(create_storage_provider("x")).__name__ == "SQLiteStorageProvider")
 hermes_via_factory = create_storage_provider("x", {"storage": {
     "provider": "hermes",
-    "hermes": {"base_url": "http://127.0.0.1:1"}}})
+    "hermes": {"base_url": "http://127.0.0.1:1",
+               "verify_on_start": False}}})
 check("factory hermes branch builds adapter",
       type(hermes_via_factory).__name__ == "HermesStorageProvider")
 hermes_via_factory.close()
+try:
+    create_storage_provider("x", {"storage": {
+        "provider": "hermes",
+        "hermes": {"base_url": "http://127.0.0.1:1", "timeout": 1.0}}})
+    check("factory hermes w/ dead endpoint fails fast (verify_on_start)",
+          False)
+except HermesUnavailableError:
+    check("factory hermes w/ dead endpoint fails fast (verify_on_start)",
+          True)
 
 # ---------------------------------------------------------------------------
 # 5. Static dependency checks (§23)

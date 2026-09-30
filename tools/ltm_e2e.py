@@ -225,9 +225,17 @@ async def main() -> int:
         print("\n--- F. nickname 小雪 ---")
         r = await chat_once(ws, "以后你可以叫我小雪")
         print(f"reply[:60]: {r[:60]}")
-        await asyncio.sleep(6)
-        mems = api_get(f"/memories?conf_uid={conf_uid}&status=all")
-        nick = [m for m in mems["memories"] if "小雪" in m["content"]]
+        # extraction is fire-and-forget async; a remote backend (hermes)
+        # adds HTTP round-trips per stored candidate, so poll instead of
+        # a fixed sleep (6s was enough for sqlite, not for slower stores)
+        nick: list = []
+        for _ in range(15):
+            await asyncio.sleep(2)
+            mems = api_get(f"/memories?conf_uid={conf_uid}&status=all")
+            nick = [m for m in mems["memories"] if "小雪" in m["content"]]
+            if any(m["memory_type"] in ("relationship", "identity")
+                   for m in nick):
+                break
         check("F1 小雪 memory stored", len(nick) >= 1, str([(m['memory_type'], m['content']) for m in mems['memories']]))
         check(
             "F2 nickname is relationship/identity type",

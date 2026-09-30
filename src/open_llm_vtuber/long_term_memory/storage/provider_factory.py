@@ -58,12 +58,18 @@ def create_storage_provider(conf_uid: str, config: Dict[str, Any] | None = None)
             timeout = 10.0
         # secrets: env var only, never persisted in memory_config.json
         api_key = os.environ.get("LTM_HERMES_API_KEY") or None
+        # fail fast when the backend is down (acceptance §12): a config
+        # that says hermes must fail loudly at startup, never silently
+        # degrade into "no memory"; tests building mock transports pass
+        # verify_on_start=False explicitly
+        verify_on_start = bool(hermes_cfg.get("verify_on_start", True))
 
         from .hermes_provider import HermesStorageProvider  # lazy: only
         # this factory branch ever imports the hermes adapter
         return HermesStorageProvider(
             conf_uid, base_url=base_url, user_id=user_id,
-            timeout=timeout, api_key=api_key)
+            timeout=timeout, api_key=api_key,
+            verify=verify_on_start)
 
     raise ValueError(
         f"unknown storage provider '{name}' (expected "

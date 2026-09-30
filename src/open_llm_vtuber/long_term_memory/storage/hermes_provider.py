@@ -257,7 +257,7 @@ class HermesStorageProvider:
 
     def __init__(self, conf_uid: str, *, base_url: str,
                  user_id: str = "vtuber", timeout: float = 10.0,
-                 api_key: Optional[str] = None):
+                 api_key: Optional[str] = None, verify: bool = True):
         if httpx is None:
             raise HermesUnavailableError(
                 "hermes provider requires the httpx package "
@@ -277,6 +277,20 @@ class HermesStorageProvider:
             headers=self._headers)
         self._sidecar = _Sidecar(conf_uid)
         self._id_map_synced = False
+        if verify:
+            # fail fast when the configured backend is down: a config that
+            # says hermes must not silently degrade into "no memory" —
+            # the manager layer logs it and chat keeps running, but the
+            # failure is loud and attributable (acceptance §12)
+            try:
+                self._client.get("/api/health").raise_for_status()
+            except httpx.HTTPError as e:
+                self._client.close()
+                raise HermesUnavailableError(
+                    f"hermes backend at {self._base_url} is not reachable "
+                    f"(health check failed: {e}) — check that the "
+                    f"ai-companion service is running and "
+                    f"storage.hermes.base_url is correct") from e
         logger.info(
             f"[LTM] HermesStorageProvider ready (agent={conf_uid}, "
             f"user={self._user_id}, endpoint={base_url})")
@@ -300,7 +314,12 @@ class HermesStorageProvider:
 
     def _ensure_id_map(self) -> None:
         """Rebuild local<->hermes id maps from Hermes metadata (once per
-        process; the sidecar usually already has it after the first run)."""
+        process; the sidecar usually already has it after the first run).
+
+        Deleted (tombstoned) Hermes records are skipped: their local ids
+        were dropped from the sidecar at delete time, and re-mapping them
+        would resurrect stale tombstone entries.
+        """
         if self._id_map_synced:
             return
         page = 0
@@ -310,6 +329,8 @@ class HermesStorageProvider:
                 params={"limit": 200, "offset": page * 200}) or {}
             items = batch.get("items", [])
             for it in items:
+                if it.get("status") in _HIDDEN_HERMES_STATUS:
+                    continue
                 hid = it.get("id", "")
                 ltm = (it.get("metadata") or {}).get("ltm") or {}
                 local_id = ltm.get("memory_id")
@@ -539,12 +560,21 @@ class HermesStorageProvider:
 
 
 def _parse_ts(value: Any) -> float:
-    """ISO-8601 (Hermes) -> epoch seconds; 0.0 when absent/unparseable."""
+    """ISO-8601 (Hermes) -> epoch seconds; 0.0 when absent/unparseable.
+
+    ai_companion serializes datetimes without a timezone suffix (its
+    ``utcnow()`` helper is actually naive local/UTC per its own iso()
+    calls); interpret naive stamps AS UTC — never by the local timezone,
+    which would shift recency scoring by the server's UTC offset.
+    """
     if not value:
         return 0.0
     try:
-        from datetime import datetime
+        from datetime import datetime, timezone
         s = str(value).replace("Z", "+00:00")
-        return datetime.fromisoformat(s).timestamp()
+        dt = datetime.fromisoformat(s)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.timestamp()
     except Exception:  # noqa: BLE001
         return 0.0

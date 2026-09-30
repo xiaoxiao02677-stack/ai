@@ -96,6 +96,9 @@ _DEFAULT_CONFIG: Dict[str, Any] = {
             "base_url": "http://127.0.0.1:12396",
             "user_id": "vtuber",
             "timeout": 10.0,
+            # 构造时探活 /api/health, 后端不可用立即显式失败(不静默降级);
+            # 测试 mock 场景可置 false
+            "verify_on_start": True,
             # api_key 从环境变量 LTM_HERMES_API_KEY 读取, 不落盘
         },
     },
