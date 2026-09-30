@@ -12,7 +12,8 @@ and the prompt builder:
 
 All failures degrade gracefully: chat keeps working without memory.
 
-Storage: stdlib sqlite3, one DB file per conf_uid under long_term_memory_data/.
+Storage: stdlib-backed, one store per conf_uid under long_term_memory_data/
+(backend details are an internal concern of the storage subpackage).
 Phase 1 uses keyword-based retrieval; embeddings are a phase-2 upgrade.
 """
 

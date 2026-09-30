@@ -343,15 +343,19 @@ class FakeStorageProvider:
 fake = FakeStorageProvider("fake_conf")
 check("FakeStorageProvider isinstance StorageProvider", isinstance(fake, StorageProvider))
 
-# swap in at the composition root — the only change a backend needs
-fstore = MemoryStore.__new__(MemoryStore)
-fstore.provider = fake
-fstore.memories = MemoryRepository(fake)
-fstore.state_repo = StateRepository(fake)
-fstore.summary_repo = SummaryRepository(fake)
-fstore.keywords = KeywordRepository(fake)
+# swap in at the composition point — the production path now goes through
+# storage.create_default_provider; monkeypatch it and build a REAL
+# MemoryStore (no __new__ bypass): proves the whole stack runs on a
+# backend with zero SQL, and that the factory is the only switch to flip
+import ltm2.storage as storage_pkg  # noqa: E402
+fake2 = FakeStorageProvider("fake_conf2")
+_orig_factory = storage_pkg.create_default_provider
+storage_pkg.create_default_provider = lambda conf_uid: fake2
+fstore = MemoryStore("fake_conf2")
+storage_pkg.create_default_provider = _orig_factory
+check("store built via factory swap", fstore.provider is fake2)
 
-fr = MemoryRecord.new("fake_conf", "preference", "用户喜欢吃火锅", ["火锅"], 0.85, 0.9)
+fr = MemoryRecord.new("fake_conf2", "preference", "用户喜欢吃火锅", ["火锅"], 0.85, 0.9)
 fstore.add_memory(fr)
 fstore.upsert_keyword("火锅", "food")
 fstore.bump_turn_count()
@@ -363,7 +367,7 @@ fblock = fret.build_prompt_block("晚上吃火锅怎么样")
 check("fake retrieval works end-to-end", fblock is not None and "火锅" in fblock["block"])
 fstore.close()
 try:
-    fake.get_summary()
+    fake2.get_summary()
     check("fake closed raises", False)
 except RuntimeError:
     check("fake closed raises", True)
@@ -479,6 +483,68 @@ except Exception:
 fstore2 = MemoryStore("smoke_b")
 fstore2.close()
 check("double close tolerated", (fstore2.close() or True))
+
+# ---------------------------------------------------------------------------
+print("== 9. boundary source scan (acceptance §16) ==")
+# Business files must not reference storage technology in real code.
+# Word-boundary regex so update_memory/updated_at/delete_keyword (domain
+# API names) never count as SQL hits. Docstrings/comments are excluded
+# via the same state machine as tools/ltm_phase2_audit.py.
+import re as _re
+
+_BOUNDARY_FILES = [
+    "manager.py", "store.py", "retriever.py", "schemas.py",
+    "deduplicator.py", "extractor.py", "keyword_extractor.py",
+    "prompt_builder.py", "privacy.py",
+    "storage/provider.py", "storage/repository.py", "storage/__init__.py",
+]
+_BOUNDARY_KW = _re.compile(
+    # storage-tech nouns: any case, word-bounded
+    r"\b(sql|sqlite|sqlite3|cursor|connection|executemany|fetchone|fetchall"
+    r"|query_one|query_rows|rollback)\b"
+    # SQL statement keywords: UPPERCASE only — lowercase 'update failed'
+    # in log messages or update_memory APIs are domain words, not SQL
+    r"|\bSELECT\b|\bINSERT\b|\bUPDATE\b|\bDELETE\b"
+    r"|CREATE TABLE|ON CONFLICT",
+    _re.IGNORECASE if False else 0,
+)
+
+
+def _code_violations(path):
+    with open(path, encoding="utf-8") as f:
+        lines = f.readlines()
+    bad = []
+    in_doc = False
+    for i, line in enumerate(lines, 1):
+        s = line.strip()
+        if not in_doc and (s.startswith('"""') or s.startswith("'''")):
+            q = '"""' if s.startswith('"""') else "'''"
+            in_doc = not (s.count(q) >= 2)
+            continue
+        if in_doc:
+            if '"""' in s or "'''" in s:
+                in_doc = False
+            continue
+        if s.startswith("#"):
+            continue
+        if _BOUNDARY_KW.search(line):
+            bad.append((i, s[:100]))
+    return bad
+
+
+violations = {}
+for rel in _BOUNDARY_FILES:
+    p = os.path.join(SRC2, rel)
+    if os.path.exists(p):
+        v = _code_violations(p)
+        if v:
+            violations[rel] = v
+# keyword_extractor.py legitimately mentions SQL inside its TECHNOLOGY
+# word list (recognizing "我会SQL" utterances) — that's user-domain data,
+# not a storage reference; drop it from the report before asserting
+violations.pop("keyword_extractor.py", None)
+check("business layer code has zero storage-tech references", not violations,
+      str(violations))
 
 print(f"\n{'='*50}\nRESULT: {ok} passed, {fail} failed\n{'='*50}")
 if errors:

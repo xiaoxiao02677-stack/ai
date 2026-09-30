@@ -6,8 +6,8 @@ Phase 1: keyword-based retrieval over active memories, then weighted scoring:
             + confidence*0.15 + usage*0.05
 
 Only memories above min_total_score are injected, capped by
-max_injected_memories and max_injection_chars. Retrieval is synchronous and
-index-backed (LIKE over a small table) to stay low-latency.
+max_injected_memories and max_injection_chars. Retrieval is synchronous
+and term-indexed over a small candidate set to stay low-latency.
 """
 
 import re

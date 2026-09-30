@@ -2,7 +2,7 @@
 
 MemoryRecord is a plain dataclass (not pydantic) to keep the module free of
 framework coupling; dict conversion helpers handle serialization for the
-SQLite layer and the management API.
+persistence layer and the management API.
 """
 
 import time

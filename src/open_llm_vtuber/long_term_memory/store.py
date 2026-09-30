@@ -2,9 +2,11 @@
 
 Phase-1A refactor: the original 406-line multi-responsibility file was
 split into long_term_memory/storage/. Phase-1B typed everything against
-a SQL-shaped ``StorageProvider`` Protocol. Phase-2 made the protocol
-aggregate-shaped (domain objects in/out) and sank all SQL into
-``storage/sqlite_provider.py``.
+a SQL-shaped storage protocol. Phase-2 made the protocol aggregate-shaped
+(domain objects in/out), sank every SQL statement into the storage
+subpackage, and moved backend selection behind
+``storage.create_default_provider`` — this facade no longer names any
+concrete backend or storage technology.
 
 This class remains the exact public API the rest of the project uses
 (manager.py, memory_panel.py, run_tests.py):
@@ -12,12 +14,6 @@ This class remains the exact public API the rest of the project uses
     MemoryStore(conf_uid) — same constructor
     all 21 public methods — same signatures, same behavior
     .conf_uid / .db_path / .close() — same attributes
-
-This file is also the **composition root**: the single place in the
-system that imports a concrete storage provider. Swapping SQLite for
-another backend (e.g. a future HermesProvider) means changing the one
-``SQLiteStorageProvider`` reference below — nothing else in the project
-names a concrete backend.
 
 To query memories in new code, prefer the domain repositories directly
 (``store.memories`` / ``store.keywords`` / ``store.state_repo`` /
@@ -28,8 +24,8 @@ is expected (management panel, tests).
 from typing import Any, Dict, List, Optional
 
 from .schemas import MemoryRecord, KeywordRecord, UserState
+from . import storage
 from .storage import (
-    SQLiteStorageProvider,
     MemoryRepository,
     StateRepository,
     SummaryRepository,
@@ -38,16 +34,17 @@ from .storage import (
 
 
 class MemoryStore(MemoryRepository):
-    """SQLite-backed store for memories, keywords and user state.
+    """Store for memories, keywords and user state (compat facade).
 
-    Compat facade + composition root: wiring + delegation only. See
-    storage/ subpackage for the actual implementations.
+    Wiring + delegation only; the storage subpackage owns the backend
+    choice, all persistence semantics and every implementation detail.
     """
 
     def __init__(self, conf_uid: str):
-        # composition root — the only concrete-provider instantiation
-        # in the entire project
-        self.provider = SQLiteStorageProvider(conf_uid)
+        # backend choice lives behind the storage package's factory —
+        # resolved through the module attribute so swapping the whole
+        # stack (including from tests) is a one-line change there
+        self.provider = storage.create_default_provider(conf_uid)
         self.memories = MemoryRepository(self.provider)
         self.state_repo = StateRepository(self.provider)
         self.summary_repo = SummaryRepository(self.provider)

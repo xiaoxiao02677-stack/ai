@@ -11,13 +11,16 @@ Layering (Phase 2):
 
     StorageProvider            — the contract (provider.py, aggregate-shaped
                                  Protocol: domain objects in, domain objects out)
-        └─ SQLiteStorageProvider   — the SQLite implementation, and the
+        └─ SQLiteStorageProvider   — the default implementation, and the
                                      ONLY file in the system containing SQL
 
 Repositories depend only on the ``StorageProvider`` Protocol — never on a
-concrete class, a SQL string, a cursor, a lock or a connection. A future
-Hermes provider implements the same Protocol and can be swapped in at the
-composition root (``store.py``) without touching any repository.
+concrete class, a SQL string, a cursor, a lock or a connection.
+
+``create_default_provider`` below is the **composition point** of the whole
+persistence stack: every store above this package obtains its provider
+through it. Swapping the backend (e.g. a future HermesProvider) is a
+one-line change in this factory and touches nothing else in the project.
 """
 
 from .provider import StorageProvider
@@ -29,9 +32,21 @@ from .repository import (
     SummaryRepository,
 )
 
+
+def create_default_provider(conf_uid: str) -> StorageProvider:
+    """Build the storage backend this build ships with (one per conf_uid).
+
+    The single place a concrete provider is chosen. ``MemoryStore`` and
+    the repositories never name a concrete backend; pointing this factory
+    at another ``StorageProvider`` implementation swaps the whole stack.
+    """
+    return SQLiteStorageProvider(conf_uid)
+
+
 __all__ = [
     "StorageProvider",
     "SQLiteStorageProvider",
+    "create_default_provider",
     "MemoryRepository",
     "KeywordRepository",
     "StateRepository",
