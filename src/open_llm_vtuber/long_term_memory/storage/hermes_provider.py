@@ -116,6 +116,7 @@ class _Sidecar:
             "state": None,       # UserState dict or None
             "summary": "",
             "turn_count": 0,
+            "experiences": [],   # Phase 4: ExperienceRecord dicts (LTM-only aggregate)
         }
         self._load()
 
@@ -244,6 +245,41 @@ class _Sidecar:
             self._data["turn_count"] = int(self._data["turn_count"]) + 1
             self._flush()
             return self._data["turn_count"]
+
+    # -- experiences (Phase 4) ---------------------------------------------------
+
+    def save_experience(self, record_dict: Dict[str, Any]) -> None:
+        with self._lock:
+            exps = self._data["experiences"]
+            for i, e in enumerate(exps):
+                if e.get("experience_id") == record_dict["experience_id"]:
+                    exps[i] = record_dict   # overwrite (update path)
+                    self._flush()
+                    return
+            exps.append(record_dict)
+            self._flush()
+
+    def list_experiences(self, limit: int = 200) -> List[Dict[str, Any]]:
+        with self._lock:
+            out = list(self._data["experiences"])
+        out.sort(key=lambda e: (-(e.get("finalized_at") or 0.0),
+                                -(e.get("started_at") or 0.0)))
+        return out[:limit]
+
+    def delete_experience(self, experience_id: str) -> bool:
+        with self._lock:
+            before = len(self._data["experiences"])
+            self._data["experiences"] = [
+                e for e in self._data["experiences"]
+                if e.get("experience_id") != experience_id]
+            changed = len(self._data["experiences"]) != before
+            if changed:
+                self._flush()
+        return changed
+
+    def count_experiences(self) -> int:
+        with self._lock:
+            return len(self._data["experiences"])
 
 
 class HermesStorageProvider:
@@ -549,6 +585,32 @@ class HermesStorageProvider:
 
     def bump_turn_count(self) -> int:
         return self._sidecar.bump_turn_count()
+
+    # -- experiences aggregate (Phase 4) ------------------------------------------
+
+    def save_experience(self, record) -> None:
+        # Hermes has no interaction-episode concept; experiences are an
+        # LTM-domain aggregate persisted in the sidecar (same pattern as
+        # keywords/state/summary). Explicit, no silent cross-backend writes.
+        self._sidecar.save_experience(record.to_dict())
+
+    def get_experience(self, experience_id: str):
+        from ...experience.schemas import ExperienceRecord  # lazy: avoid cycle
+        for d in self._sidecar.list_experiences(limit=10000):
+            if d.get("experience_id") == experience_id:
+                return ExperienceRecord.from_dict(d)
+        return None
+
+    def list_experiences(self, limit: int = 200) -> List:
+        from ...experience.schemas import ExperienceRecord  # lazy: avoid cycle
+        return [ExperienceRecord.from_dict(d)
+                for d in self._sidecar.list_experiences(limit=limit)]
+
+    def delete_experience(self, experience_id: str) -> bool:
+        return self._sidecar.delete_experience(experience_id)
+
+    def count_experiences(self) -> int:
+        return self._sidecar.count_experiences()
 
     # -- lifecycle ----------------------------------------------------------------------
 

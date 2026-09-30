@@ -122,6 +122,31 @@ class SQLiteStorageProvider:
                 )
                 """
             )
+            # Phase 4: captured interaction episodes (additive — existing
+            # .db files gain the table on next open, zero data migration)
+            self._conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS experiences (
+                    experience_id TEXT PRIMARY KEY,
+                    conf_uid TEXT NOT NULL,
+                    history_uid TEXT DEFAULT '',
+                    interaction_type TEXT DEFAULT 'chat',
+                    user_input TEXT DEFAULT '',
+                    ai_response TEXT DEFAULT '',
+                    tool_calls TEXT NOT NULL DEFAULT '[]',
+                    outcome TEXT DEFAULT '',
+                    outcome_type TEXT DEFAULT 'turn_complete',
+                    metadata TEXT NOT NULL DEFAULT '{}',
+                    started_at REAL DEFAULT 0,
+                    finalized_at REAL DEFAULT 0,
+                    created_at REAL DEFAULT 0,
+                    updated_at REAL DEFAULT 0
+                )
+                """
+            )
+            self._conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_exp_conf ON experiences(conf_uid, finalized_at)"
+            )
 
     # -- private row mappers ----------------------------------------------------
 
@@ -379,6 +404,68 @@ class SQLiteStorageProvider:
             ).fetchone()
             return int(row[0]) if row else 0
 
+    # -- experiences aggregate (Phase 4) -----------------------------------------
+
+    def save_experience(self, record) -> None:
+        with self._lock, self._conn:
+            self._conn.execute(
+                """
+                INSERT OR REPLACE INTO experiences
+                (experience_id, conf_uid, history_uid, interaction_type,
+                 user_input, ai_response, tool_calls, outcome, outcome_type,
+                 metadata, started_at, finalized_at, created_at, updated_at)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                """,
+                (
+                    record.experience_id,
+                    record.conf_uid,
+                    record.history_uid,
+                    record.interaction_type,
+                    record.user_input,
+                    record.ai_response,
+                    json.dumps(record.tool_calls, ensure_ascii=False),
+                    record.outcome,
+                    record.outcome_type,
+                    json.dumps(record.metadata, ensure_ascii=False),
+                    record.started_at,
+                    record.finalized_at,
+                    record.created_at,
+                    record.updated_at,
+                ),
+            )
+
+    def get_experience(self, experience_id: str):
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM experiences WHERE experience_id=?", (experience_id,)
+            ).fetchone()
+        return _experience_from_row(row) if row else None
+
+    def list_experiences(self, limit: int = 200) -> List:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM experiences WHERE conf_uid=? "
+                "ORDER BY finalized_at DESC, started_at DESC LIMIT ?",
+                (self.conf_uid, limit),
+            ).fetchall()
+        return [_experience_from_row(r) for r in rows]
+
+    def delete_experience(self, experience_id: str) -> bool:
+        with self._lock, self._conn:
+            affected = self._conn.execute(
+                "DELETE FROM experiences WHERE experience_id=? AND conf_uid=?",
+                (experience_id, self.conf_uid),
+            ).rowcount
+        return affected > 0
+
+    def count_experiences(self) -> int:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT COUNT(*) AS cnt FROM experiences WHERE conf_uid=?",
+                (self.conf_uid,),
+            ).fetchone()
+        return int(row["cnt"]) if row else 0
+
     # -- lifecycle -------------------------------------------------------------
 
     def close(self) -> None:
@@ -387,3 +474,26 @@ class SQLiteStorageProvider:
                 self._conn.close()
         except Exception as e:
             logger.warning(f"[LTM] store close error: {e}")
+
+
+def _experience_from_row(row: sqlite3.Row):
+    """sqlite Row -> ExperienceRecord (lazy import: the experience domain
+    imports this package's Protocol, so a module-level import would cycle)."""
+    from ...experience.schemas import ExperienceRecord  # noqa: PLC0415
+
+    return ExperienceRecord(
+        experience_id=row["experience_id"],
+        conf_uid=row["conf_uid"],
+        history_uid=row["history_uid"] or "",
+        interaction_type=row["interaction_type"] or "chat",
+        user_input=row["user_input"] or "",
+        ai_response=row["ai_response"] or "",
+        tool_calls=json.loads(row["tool_calls"] or "[]"),
+        outcome=row["outcome"] or "",
+        outcome_type=row["outcome_type"] or "turn_complete",
+        metadata=json.loads(row["metadata"] or "{}"),
+        started_at=float(row["started_at"] or 0.0),
+        finalized_at=float(row["finalized_at"] or 0.0),
+        created_at=float(row["created_at"] or 0.0),
+        updated_at=float(row["updated_at"] or 0.0),
+    )

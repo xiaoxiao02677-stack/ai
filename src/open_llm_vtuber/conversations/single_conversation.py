@@ -24,9 +24,17 @@ try:
 except ImportError:  # direct in-package import (no src. prefix)
     from .. import long_term_memory as _ltm
 
+# Experience memory (Phase 4) — concrete interaction episodes; optional,
+# deterministic capture, never blocks or breaks the chat turn
+try:
+    from src.open_llm_vtuber import experience as _xp
+except ImportError:  # direct in-package import (no src. prefix)
+    from .. import experience as _xp
+
 # strong references to fire-and-forget extraction tasks so they are not
 # garbage-collected mid-flight
 _ltm_extraction_tasks = set()
+_xp_capture_tasks = set()
 
 # Import necessary types from agent outputs
 from ..agent.output_types import SentenceOutput, AudioOutput
@@ -58,6 +66,16 @@ async def process_single_conversation(
     # Create TTSTaskManager for this conversation
     tts_manager = TTSTaskManager()
     full_response = ""  # Initialize full_response here
+
+    # Experience capture (Phase 4): one engine per turn, deterministic
+    # records fed by structures this function already produces
+    _xp_engine = _xp.ExperienceEngine.start(
+        context.character_config.conf_uid,
+        context.history_uid or "",
+        "proactive" if (metadata or {}).get("skip_memory", False) else "chat",
+    )
+    _xp_tool_calls: List[Dict[str, str]] = []
+    _xp_agent_errored = False
 
     try:
         # Send initial signals
@@ -112,6 +130,7 @@ async def process_single_conversation(
         logger.info(f"User input: {input_text}")
         if images:
             logger.info(f"With {len(images)} images")
+        _xp_engine.record_user_input(input_text)
 
         try:
             # agent.chat yields Union[SentenceOutput, Dict[str, Any]]
@@ -125,6 +144,12 @@ async def process_single_conversation(
                     # Handle tool status event: send WebSocket message
                     output_item["name"] = context.character_config.character_name
                     logger.debug(f"Sending tool status update: {output_item}")
+
+                    # Experience capture: log the tool event (name+status only)
+                    _xp_engine.record_tool(
+                        output_item.get("tool_name", ""),
+                        output_item.get("status", ""),
+                    )
 
                     await websocket_send(json.dumps(output_item))
 
@@ -154,6 +179,7 @@ async def process_single_conversation(
             logger.exception(
                 f"Error processing agent response stream: {e}"
             )  # Log with stack trace
+            _xp_agent_errored = True  # experience outcome marker
             await websocket_send(
                 json.dumps(
                     {
@@ -212,6 +238,31 @@ async def process_single_conversation(
                 _extraction_task.add_done_callback(_ltm_extraction_tasks.discard)
             except Exception as ltm_err:
                 logger.debug(f"[LTM] extraction scheduling failed: {ltm_err}")
+
+        # Experience capture (Phase 4): finalize the episode and persist in
+        # a fire-and-forget task (same discipline as the LTM hook above —
+        # strong ref + done callback; failures log a warning, never break
+        # the chat turn). Deterministic capture only: no LLM, no analysis.
+        try:
+            _xp_engine.record_ai_response(full_response)
+            _xp_engine.record_outcome(
+                "AI 已回复，用户可继续对话"
+                if full_response
+                else "AI 未产生文本回复"
+            )
+            if _xp_agent_errored and not full_response:
+                _xp_outcome_type = "ai_error"
+            else:
+                _xp_outcome_type = "turn_complete" if full_response else "empty_reply"
+            _xp_record = _xp_engine.finalize(_xp_outcome_type)
+            # persist_record is synchronous (SQLite/local IO) — run it on
+            # a worker thread so the event loop (chat latency) is untouched
+            _xp_task = asyncio.create_task(
+                asyncio.to_thread(_xp.persist_record, _xp_record))
+            _xp_capture_tasks.add(_xp_task)
+            _xp_task.add_done_callback(_xp_capture_tasks.discard)
+        except Exception as xp_err:
+            logger.warning(f"[XP] capture scheduling failed: {xp_err}")
 
         return full_response  # Return accumulated full_response
 

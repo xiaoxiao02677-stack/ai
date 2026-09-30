@@ -338,6 +338,37 @@ class FakeStorageProvider:
             self._turns += 1
             return self._turns
 
+    # Phase 4: experiences aggregate (minimal in-memory implementation so
+    # the fake keeps satisfying the extended StorageProvider protocol)
+    def save_experience(self, record):
+        with self._lock:
+            self._ck()
+            self._experiences = getattr(self, "_experiences", {})
+            self._experiences[record.experience_id] = record
+
+    def get_experience(self, experience_id):
+        with self._lock:
+            self._ck()
+            return getattr(self, "_experiences", {}).get(experience_id)
+
+    def list_experiences(self, limit=200):
+        with self._lock:
+            self._ck()
+            out = list(getattr(self, "_experiences", {}).values())
+        out.sort(key=lambda r: -r.finalized_at)
+        return out[:limit]
+
+    def delete_experience(self, experience_id):
+        with self._lock:
+            self._ck()
+            exps = getattr(self, "_experiences", {})
+            return exps.pop(experience_id, None) is not None
+
+    def count_experiences(self):
+        with self._lock:
+            self._ck()
+            return len(getattr(self, "_experiences", {}))
+
     def close(self):
         self.closed = True
 

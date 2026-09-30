@@ -35,9 +35,12 @@ Design rules (carried over from Phase 1B):
   provider and invisible to callers.
 """
 
-from typing import List, Optional, Protocol, Sequence, runtime_checkable
+from typing import TYPE_CHECKING, Any, List, Optional, Protocol, Sequence, runtime_checkable
 
 from ..schemas import KeywordRecord, MemoryRecord, UserState
+
+if TYPE_CHECKING:  # Phase-4 domain object; runtime typing stays loose (Any)
+    from ...experience.schemas import ExperienceRecord
 
 
 @runtime_checkable
@@ -143,6 +146,29 @@ class StorageProvider(Protocol):
 
     def bump_turn_count(self) -> int:
         """Increment the turn count atomically and return the new value."""
+        ...
+
+    # -- experiences aggregate (Phase 4) -----------------------------------------
+
+    def save_experience(self, record: "ExperienceRecord") -> None:
+        """Insert or overwrite an experience record keyed by its
+        ``experience_id`` (ExperienceRecord domain object)."""
+        ...
+
+    def get_experience(self, experience_id: str) -> Optional["ExperienceRecord"]:
+        """Fetch one experience by id, or ``None``."""
+        ...
+
+    def list_experiences(self, limit: int = 200) -> List["ExperienceRecord"]:
+        """Most recent experiences for this conf_uid, newest first."""
+        ...
+
+    def delete_experience(self, experience_id: str) -> bool:
+        """Delete one experience. True when a row was removed."""
+        ...
+
+    def count_experiences(self) -> int:
+        """Count experiences for this conf_uid."""
         ...
 
     # -- lifecycle -------------------------------------------------------------

@@ -88,6 +88,11 @@ _DEFAULT_CONFIG: Dict[str, Any] = {
     },
     # debug
     "memory_debug": True,
+    # Phase 4 experience capture (deterministic interaction records; see
+    # the experience/ package — capture hook + storage ride this switch)
+    "experience": {
+        "enabled": True,
+    },
     # storage backend: "sqlite" (default) | "hermes" (REST adapter over
     # the ai-companion Hermes Memory API; see storage/provider_factory.py)
     "storage": {
