@@ -102,6 +102,15 @@ _DEFAULT_CONFIG: Dict[str, Any] = {
         "batch_size": 20,       # max experiences per LLM call
         "llm_timeout": 60.0,
     },
+    # Phase 6 lesson (reusable takeaways distilled from reflections; see
+    # the lesson/ package — informs, never commands; no auto-injection)
+    "lesson": {
+        "enabled": True,
+        "llm_analysis": True,
+        "batch_size": 20,       # max reflections per LLM call
+        "min_support": 5,       # rule layer: min experiences behind a reflection
+        "llm_timeout": 60.0,
+    },
     # storage backend: "sqlite" (default) | "hermes" (REST adapter over
     # the ai-companion Hermes Memory API; see storage/provider_factory.py)
     "storage": {

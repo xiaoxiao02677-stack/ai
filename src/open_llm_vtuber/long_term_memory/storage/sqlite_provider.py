@@ -170,6 +170,25 @@ class SQLiteStorageProvider:
             self._conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_rfl_conf ON reflections(conf_uid, created_at)"
             )
+            # Phase 6: reusable lessons distilled from reflections
+            # (additive — existing .db files gain the table on next open)
+            self._conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS lessons (
+                    lesson_id TEXT PRIMARY KEY,
+                    conf_uid TEXT NOT NULL,
+                    source_reflection_ids TEXT NOT NULL DEFAULT '[]',
+                    lesson TEXT DEFAULT '',
+                    confidence REAL DEFAULT 0.5,
+                    metadata TEXT NOT NULL DEFAULT '{}',
+                    created_at REAL DEFAULT 0,
+                    updated_at REAL DEFAULT 0
+                )
+                """
+            )
+            self._conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_lsn_conf ON lessons(conf_uid, created_at)"
+            )
 
     # -- private row mappers ----------------------------------------------------
 
@@ -550,6 +569,65 @@ class SQLiteStorageProvider:
             ).fetchone()
         return int(row["cnt"]) if row else 0
 
+    # -- lessons aggregate (Phase 6) ----------------------------------------------
+
+    def save_lesson(self, record) -> None:
+        with self._lock, self._conn:
+            self._conn.execute(
+                """
+                INSERT OR REPLACE INTO lessons
+                (lesson_id, conf_uid, source_reflection_ids, lesson,
+                 confidence, metadata, created_at, updated_at)
+                VALUES (?,?,?,?,?,?,?,?)
+                """,
+                (
+                    record.lesson_id,
+                    record.conf_uid,
+                    json.dumps(record.source_reflection_ids, ensure_ascii=False),
+                    record.lesson,
+                    record.confidence,
+                    json.dumps(record.metadata, ensure_ascii=False),
+                    record.created_at,
+                    record.updated_at,
+                ),
+            )
+
+    def get_lesson(self, lesson_id: str):
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM lessons WHERE lesson_id=?", (lesson_id,)
+            ).fetchone()
+        return _lesson_from_row(row) if row else None
+
+    def list_lessons(self, limit: int = 200) -> List:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM lessons WHERE conf_uid=? "
+                "ORDER BY created_at DESC LIMIT ?",
+                (self.conf_uid, limit),
+            ).fetchall()
+        return [_lesson_from_row(r) for r in rows]
+
+    def list_lessons_by_reflection(self, reflection_id: str) -> List:
+        rows = self.list_lessons(limit=10000)
+        return [r for r in rows if reflection_id in r.source_reflection_ids]
+
+    def delete_lesson(self, lesson_id: str) -> bool:
+        with self._lock, self._conn:
+            affected = self._conn.execute(
+                "DELETE FROM lessons WHERE lesson_id=? AND conf_uid=?",
+                (lesson_id, self.conf_uid),
+            ).rowcount
+        return affected > 0
+
+    def count_lessons(self) -> int:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT COUNT(*) AS cnt FROM lessons WHERE conf_uid=?",
+                (self.conf_uid,),
+            ).fetchone()
+        return int(row["cnt"]) if row else 0
+
     # -- lifecycle -------------------------------------------------------------
 
     def close(self) -> None:
@@ -596,6 +674,22 @@ def _reflection_from_row(row: sqlite3.Row):
         reflection_type=row["reflection_type"] or "interaction_pattern",
         observation=row["observation"] or "",
         evidence=json.loads(row["evidence"] or "[]"),
+        confidence=float(row["confidence"] or 0.5),
+        metadata=json.loads(row["metadata"] or "{}"),
+        created_at=float(row["created_at"] or 0.0),
+        updated_at=float(row["updated_at"] or 0.0),
+    )
+
+
+def _lesson_from_row(row: sqlite3.Row):
+    """sqlite Row -> LessonRecord (lazy import, same cycle reason)."""
+    from ...lesson.schemas import LessonRecord  # noqa: PLC0415
+
+    return LessonRecord(
+        lesson_id=row["lesson_id"],
+        conf_uid=row["conf_uid"],
+        source_reflection_ids=json.loads(row["source_reflection_ids"] or "[]"),
+        lesson=row["lesson"] or "",
         confidence=float(row["confidence"] or 0.5),
         metadata=json.loads(row["metadata"] or "{}"),
         created_at=float(row["created_at"] or 0.0),

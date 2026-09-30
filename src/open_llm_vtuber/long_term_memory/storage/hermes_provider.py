@@ -118,6 +118,7 @@ class _Sidecar:
             "turn_count": 0,
             "experiences": [],   # Phase 4: ExperienceRecord dicts (LTM-only aggregate)
             "reflections": [],   # Phase 5: ReflectionRecord dicts (LTM-only aggregate)
+            "lessons": [],        # Phase 6: LessonRecord dicts (LTM-only aggregate)
         }
         self._load()
 
@@ -315,6 +316,40 @@ class _Sidecar:
     def count_reflections(self) -> int:
         with self._lock:
             return len(self._data["reflections"])
+
+    # -- lessons (Phase 6) ----------------------------------------------------------
+
+    def save_lesson(self, record_dict: Dict[str, Any]) -> None:
+        with self._lock:
+            lss = self._data["lessons"]
+            for i, l in enumerate(lss):
+                if l.get("lesson_id") == record_dict["lesson_id"]:
+                    lss[i] = record_dict   # overwrite (update path)
+                    self._flush()
+                    return
+            lss.append(record_dict)
+            self._flush()
+
+    def list_lessons(self, limit: int = 200) -> List[Dict[str, Any]]:
+        with self._lock:
+            out = list(self._data["lessons"])
+        out.sort(key=lambda l: -(l.get("created_at") or 0.0))
+        return out[:limit]
+
+    def delete_lesson(self, lesson_id: str) -> bool:
+        with self._lock:
+            before = len(self._data["lessons"])
+            self._data["lessons"] = [
+                l for l in self._data["lessons"]
+                if l.get("lesson_id") != lesson_id]
+            changed = len(self._data["lessons"]) != before
+            if changed:
+                self._flush()
+        return changed
+
+    def count_lessons(self) -> int:
+        with self._lock:
+            return len(self._data["lessons"])
 
 
 class HermesStorageProvider:
@@ -671,6 +706,35 @@ class HermesStorageProvider:
 
     def count_reflections(self) -> int:
         return self._sidecar.count_reflections()
+
+    # -- lessons aggregate (Phase 6) -----------------------------------------------
+
+    def save_lesson(self, record) -> None:
+        # Hermes has no lesson concept; lessons are an LTM-domain
+        # aggregate persisted in the sidecar (same pattern as reflections)
+        self._sidecar.save_lesson(record.to_dict())
+
+    def get_lesson(self, lesson_id: str):
+        from ...lesson.schemas import LessonRecord  # lazy: avoid cycle
+        for d in self._sidecar.list_lessons(limit=10000):
+            if d.get("lesson_id") == lesson_id:
+                return LessonRecord.from_dict(d)
+        return None
+
+    def list_lessons(self, limit: int = 200) -> List:
+        from ...lesson.schemas import LessonRecord  # lazy: avoid cycle
+        return [LessonRecord.from_dict(d)
+                for d in self._sidecar.list_lessons(limit=limit)]
+
+    def list_lessons_by_reflection(self, reflection_id: str) -> List:
+        out = self.list_lessons(limit=10000)
+        return [r for r in out if reflection_id in r.source_reflection_ids]
+
+    def delete_lesson(self, lesson_id: str) -> bool:
+        return self._sidecar.delete_lesson(lesson_id)
+
+    def count_lessons(self) -> int:
+        return self._sidecar.count_lessons()
 
     # -- lifecycle ----------------------------------------------------------------------
 

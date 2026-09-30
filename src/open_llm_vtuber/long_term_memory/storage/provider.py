@@ -39,9 +39,10 @@ from typing import TYPE_CHECKING, Any, List, Optional, Protocol, Sequence, runti
 
 from ..schemas import KeywordRecord, MemoryRecord, UserState
 
-if TYPE_CHECKING:  # Phase-4/5 domain objects; runtime typing stays loose
+if TYPE_CHECKING:  # Phase-4/5/6 domain objects; runtime typing stays loose
     from ...experience.schemas import ExperienceRecord
     from ...reflection.schemas import ReflectionRecord
+    from ...lesson.schemas import LessonRecord
 
 
 @runtime_checkable
@@ -193,6 +194,33 @@ class StorageProvider(Protocol):
 
     def count_reflections(self) -> int:
         """Count reflections for this conf_uid."""
+        ...
+
+    # -- lessons aggregate (Phase 6) -----------------------------------------------
+
+    def save_lesson(self, record: "LessonRecord") -> None:
+        """Insert or overwrite a lesson record keyed by its ``lesson_id``
+        (LessonRecord domain object)."""
+        ...
+
+    def get_lesson(self, lesson_id: str) -> Optional["LessonRecord"]:
+        """Fetch one lesson by id, or ``None``."""
+        ...
+
+    def list_lessons(self, limit: int = 200) -> List["LessonRecord"]:
+        """Lessons for this conf_uid, newest first."""
+        ...
+
+    def list_lessons_by_reflection(self, reflection_id: str) -> List["LessonRecord"]:
+        """Lessons derived from the given reflection record."""
+        ...
+
+    def delete_lesson(self, lesson_id: str) -> bool:
+        """Delete one lesson. True when a row was removed."""
+        ...
+
+    def count_lessons(self) -> int:
+        """Count lessons for this conf_uid."""
         ...
 
     # -- lifecycle -------------------------------------------------------------
