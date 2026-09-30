@@ -1,26 +1,28 @@
 """MemoryStore: backward-compatible facade over the storage subpackage.
 
 Phase-1A refactor: the original 406-line multi-responsibility file was
-split into long_term_memory/storage/ (SQLiteStorageProvider +
-MemoryRepository / StateRepository / SummaryRepository / KeywordRepository).
-This class keeps the exact public API that the rest of the project uses
-(manager.py, retriever.py, memory_panel.py, run_tests.py):
+split into long_term_memory/storage/. Phase-1B typed everything against
+a SQL-shaped ``StorageProvider`` Protocol. Phase-2 made the protocol
+aggregate-shaped (domain objects in/out) and sank all SQL into
+``storage/sqlite_provider.py``.
+
+This class remains the exact public API the rest of the project uses
+(manager.py, memory_panel.py, run_tests.py):
 
     MemoryStore(conf_uid) — same constructor
-    all 25 public methods — same signatures, same behavior
+    all 21 public methods — same signatures, same behavior
     .conf_uid / .db_path / .close() — same attributes
 
-Every method delegates 1:1 to the matching repository. Behavior is
-byte-equivalent: SQL, locking, time side-effects (update_memory stamps
-updated_at via the repository, exactly as before).
+This file is also the **composition root**: the single place in the
+system that imports a concrete storage provider. Swapping SQLite for
+another backend (e.g. a future HermesProvider) means changing the one
+``SQLiteStorageProvider`` reference below — nothing else in the project
+names a concrete backend.
 
-Phase-1B: the facade no longer contains any SQL. ``stats()`` used to reach
-through the provider's private lock/connection; it now composes repository
-counts. Both the facade and the repositories depend on the StorageProvider
-Protocol, not on the SQLite class.
-
-To query memories in new code, prefer MemoryRepository directly; keep
-using MemoryStore where the legacy surface is expected.
+To query memories in new code, prefer the domain repositories directly
+(``store.memories`` / ``store.keywords`` / ``store.state_repo`` /
+``store.summary_repo``); keep using MemoryStore where the legacy surface
+is expected (management panel, tests).
 """
 
 from typing import Any, Dict, List, Optional
@@ -35,14 +37,16 @@ from .storage import (
 )
 
 
-class MemoryStore:
+class MemoryStore(MemoryRepository):
     """SQLite-backed store for memories, keywords and user state.
 
-    Compat facade: wiring + delegation only. See storage/ subpackage for
-    the actual implementations.
+    Compat facade + composition root: wiring + delegation only. See
+    storage/ subpackage for the actual implementations.
     """
 
     def __init__(self, conf_uid: str):
+        # composition root — the only concrete-provider instantiation
+        # in the entire project
         self.provider = SQLiteStorageProvider(conf_uid)
         self.memories = MemoryRepository(self.provider)
         self.state_repo = StateRepository(self.provider)
@@ -60,40 +64,8 @@ class MemoryStore:
         return self.provider.db_path
 
     # -- memories ---------------------------------------------------------------
-
-    def add_memory(self, record: MemoryRecord) -> None:
-        self.memories.add_memory(record)
-
-    def update_memory(self, record: MemoryRecord) -> None:
-        self.memories.update_memory(record)
-
-    def get_memory(self, memory_id: str) -> Optional[MemoryRecord]:
-        return self.memories.get_memory(memory_id)
-
-    def list_memories(
-        self, status: str = "active", memory_type: Optional[str] = None
-    ) -> List[MemoryRecord]:
-        return self.memories.list_memories(status=status, memory_type=memory_type)
-
-    def list_all_memories(self) -> List[MemoryRecord]:
-        return self.memories.list_all_memories()
-
-    def delete_memory(self, memory_id: str) -> bool:
-        return self.memories.delete_memory(memory_id)
-
-    def find_active_by_content(self, content: str) -> Optional[MemoryRecord]:
-        return self.memories.find_active_by_content(content)
-
-    def search_active(
-        self, terms: List[str], limit: int = 40
-    ) -> List[MemoryRecord]:
-        return self.memories.search_active(terms, limit=limit)
-
-    def mark_used(self, memory_ids: List[str]) -> None:
-        self.memories.mark_used(memory_ids)
-
-    def count_memories(self, status: str = "active") -> int:
-        return self.memories.count_memories(status=status)
+    # (add/update/get/list/delete/find/search/mark_used/count are inherited
+    #  from MemoryRepository — same signatures, repo-backed)
 
     # -- keywords ---------------------------------------------------------------
 

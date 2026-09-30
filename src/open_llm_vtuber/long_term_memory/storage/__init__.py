@@ -1,37 +1,39 @@
 """Storage subpackage: provider contract + SQLite provider + repositories.
 
-Layering (Phase 1B):
+Layering (Phase 2):
 
-    MemoryStore (compat facade, ../store.py)
-        ├─ MemoryRepository    — memories table
-        ├─ StateRepository     — user_state table
-        ├─ SummaryRepository   — summary table
-        ├─ KeywordRepository   — keywords table
+    MemoryManager / MemoryRetriever  (business layer, zero SQL)
+        ├─ MemoryRepository   — domain rules for memories
+        ├─ KeywordRepository  — input normalization for keywords
+        ├─ StateRepository    — updated_at stamp for user state
+        ├─ SummaryRepository  — delegation surface for summary/turns
         └─ all sharing one StorageProvider
 
-    StorageProvider            — the contract (provider.py, typing.Protocol)
-        └─ SQLiteStorageProvider   — the SQLite implementation
+    StorageProvider            — the contract (provider.py, aggregate-shaped
+                                 Protocol: domain objects in, domain objects out)
+        └─ SQLiteStorageProvider   — the SQLite implementation, and the
+                                     ONLY file in the system containing SQL
 
-Repositories depend only on the ``StorageProvider`` Protocol primitives
-(``execute`` / ``query_one`` / ``query_rows`` / ``transaction`` /
-``row_to_memory_record``) — never on a concrete class, a lock or a
-connection. A future Hermes provider implements the same Protocol and can
-be swapped in without touching any repository.
+Repositories depend only on the ``StorageProvider`` Protocol — never on a
+concrete class, a SQL string, a cursor, a lock or a connection. A future
+Hermes provider implements the same Protocol and can be swapped in at the
+composition root (``store.py``) without touching any repository.
 """
 
-from .provider import StorageProvider, StorageTransaction
+from .provider import StorageProvider
 from .sqlite_provider import SQLiteStorageProvider
-from .memory_repository import MemoryRepository
-from .state_repository import StateRepository
-from .summary_repository import SummaryRepository
-from .keyword_repository import KeywordRepository
+from .repository import (
+    MemoryRepository,
+    KeywordRepository,
+    StateRepository,
+    SummaryRepository,
+)
 
 __all__ = [
     "StorageProvider",
-    "StorageTransaction",
     "SQLiteStorageProvider",
     "MemoryRepository",
+    "KeywordRepository",
     "StateRepository",
     "SummaryRepository",
-    "KeywordRepository",
 ]

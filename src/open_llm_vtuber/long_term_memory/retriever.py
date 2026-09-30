@@ -15,7 +15,7 @@ import time
 from typing import Any, Dict, List, Optional
 
 from .schemas import MemoryRecord
-from .store import MemoryStore
+from .storage.repository import MemoryRepository, KeywordRepository
 from .keyword_extractor import extract_keywords, extract_search_terms
 from .privacy import sanitize_for_prompt
 
@@ -29,9 +29,23 @@ _HUNGER_RE = re.compile(r"饿了|好饿|吃什么|吃啥|晚饭|午饭|早饭|�
 
 
 class MemoryRetriever:
-    def __init__(self, config: Dict[str, Any], store: MemoryStore):
+    """Ranks and retrieves memories for prompt injection.
+
+    Depends on the domain repositories (``MemoryRepository`` for the
+    memory read surface, ``KeywordRepository`` for the hunger-bridge term
+    expansion) — never on a store or a provider directly. The legacy
+    ``MemoryRetriever(cfg, store)`` call still works because the facade
+    subclasses MemoryRepository and carries a ``.keywords`` repository.
+    """
+
+    def __init__(self, config: Dict[str, Any], repo: MemoryRepository,
+                 keywords: Optional[KeywordRepository] = None):
         self.config = config
-        self.store = store
+        self.repo = repo
+        # single-argument legacy form: repo must expose .keywords (the
+        # MemoryStore facade does; a bare MemoryRepository doesn't need
+        # hunger expansion unless wired)
+        self.keywords = keywords or getattr(repo, "keywords", None)
 
     # -- scoring --------------------------------------------------------------
 
@@ -99,7 +113,7 @@ class MemoryRetriever:
         if not _HUNGER_RE.search(query_text):
             return terms
         expanded = list(terms)
-        for kw in self.store.list_keywords(limit=100):
+        for kw in self.keywords.list_keywords(limit=100):
             if kw.category not in self._HUNGER_CATEGORIES:
                 continue
             if kw.keyword not in expanded:
@@ -130,7 +144,7 @@ class MemoryRetriever:
 
         # keyword-matched candidates first (normal path)
         if terms:
-            for rec in self.store.search_active(terms, limit=40):
+            for rec in self.repo.search_active(terms, limit=40):
                 rel = self._relevance(rec, terms)
                 s = self.score(rec, terms, now)
                 if s >= min_score:
@@ -151,7 +165,7 @@ class MemoryRetriever:
 
         # then always-on identity/relationship memories with high importance,
         # even when the current utterance shares no keywords with them
-        for rec in self.store.list_memories(status="active"):
+        for rec in self.repo.list_memories(status="active"):
             if rec.memory_id in seen_ids or rec.memory_type not in self._ALWAYS_TYPES:
                 continue
             if rec.importance < 0.70:

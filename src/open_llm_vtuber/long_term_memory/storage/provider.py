@@ -1,64 +1,43 @@
-"""StorageProvider contract: the storage primitive surface repositories need.
+"""StorageProvider contract: domain-aggregate persistence surface.
 
-Phase-1B refactor: Phase-1A left the contract *implicit* — repositories
-reached into the concrete ``SQLiteStorageProvider`` via private attributes
-(``_lock`` / ``_conn``) and the concrete class name in type hints. That
-made ``SQLiteStorageProvider`` impossible to swap.
+Phase-2 refactor: Phase-1B's protocol was still SQL-shaped — five
+primitives (``execute`` / ``query_one`` / ``query_rows`` / ``transaction``
+/ ``row_to_memory_record``) that forced every repository to compose SQL
+strings. SQL never leaked above the repository line, but the *contract*
+did: swapping SQLite for another backend still meant rewriting SQL in
+four repositories.
 
-This module promotes the implicit contract to an explicit ``typing.Protocol``
-so that:
+This protocol is now aggregate-shaped: domain objects (``MemoryRecord``
+/ ``KeywordRecord`` / ``UserState``) in, domain objects out.
 
-    MemoryManager / MemoryStore / repositories
-        depend on  ->  StorageProvider (this Protocol, structural)
-
-    SQLiteStorageProvider (concrete, owns all SQL + sqlite3 objects)
+    MemoryManager / MemoryRetriever
+        depend on  ->  repositories (repository.py, domain rules)
+    repositories
+        depend on  ->  StorageProvider (this Protocol, aggregate-shaped)
+    SQLiteStorageProvider (concrete, owns ALL SQL + sqlite3 objects)
         implements -> StorageProvider
 
-    a future HermesProvider
-        implements -> StorageProvider   (no repository change required)
+    a future HermesProvider implements the same Protocol and can be
+    swapped in by changing exactly one line — the composition root in
+    store.py, the only place that imports a concrete provider.
 
-Design rules (deliberately minimal — no repository base classes, no
-generic CRUD, no storage factory):
+Design rules (carried over from Phase 1B):
 
 * The provider owns **everything database-specific**: connection,
-  schema/DDL, the thread lock, transaction boundaries, sqlite3 objects.
-* Repositories own **domain rules only** (which columns to write, input
-  normalization, timestamp stamping, in-memory scoring) and express all
-  persistence through the primitives below.
-* No primitive leaks a sqlite3 object. Repositories never see a
-  connection, a cursor or a lock.
-* Read primitives do not open a transaction; write primitives commit;
-  multi-statement write atomicity is expressed with ``transaction()``.
-
-Row shape: ``query_one`` / ``query_rows`` return provider-native rows that
-are only ever consumed by ``row_to_memory_record`` (or by index/key in the
-few repositories that read a single scalar column). Providers therefore
-remain free to choose their own row representation.
+  schema/DDL, the thread lock, transaction boundaries, sqlite3 objects,
+  row <-> domain-object mapping, and every SQL string in the system.
+* Repositories own **domain rules only** (timestamp stamping, input
+  normalization, in-memory ranking) and contain zero SQL.
+* No method signature leaks a sqlite3 object, a cursor, a lock — or a
+  SQL string. Row representation is an internal provider concern.
+* Single-statement writes commit on their own; multi-statement
+  atomicity (keyword UPSERT, turn-count bump) is internal to the
+  provider and invisible to callers.
 """
 
-from contextlib import AbstractContextManager
-from typing import Any, Optional, Protocol, Sequence, runtime_checkable
+from typing import List, Optional, Protocol, Sequence, runtime_checkable
 
-
-@runtime_checkable
-class StorageTransaction(Protocol):
-    """Handle for a single atomic write scope opened by ``transaction()``.
-
-    Statements executed on this handle commit together on clean exit and
-    roll back together if an exception escapes.
-    """
-
-    def execute(self, sql: str, params: Sequence[Any] = ()) -> int:
-        """Run a write statement, returning the affected row count."""
-        ...
-
-    def query_one(self, sql: str, params: Sequence[Any] = ()) -> Optional[Any]:
-        """Read a single row inside the transaction (or ``None``)."""
-        ...
-
-    def query_rows(self, sql: str, params: Sequence[Any] = ()) -> Sequence[Any]:
-        """Read all rows inside the transaction."""
-        ...
+from ..schemas import KeywordRecord, MemoryRecord, UserState
 
 
 @runtime_checkable
@@ -67,7 +46,8 @@ class StorageProvider(Protocol):
 
     Implementations: ``SQLiteStorageProvider`` today, ``HermesProvider``
     in a future phase. Repositories are typed against this Protocol, so
-    switching backends requires **no repository change**.
+    switching backends requires **no repository change** — only the
+    composition root (``store.py``) swaps the concrete class.
     """
 
     # -- identity -------------------------------------------------------------
@@ -76,53 +56,96 @@ class StorageProvider(Protocol):
     """Scope key this provider instance is bound to (one store per conf_uid)."""
 
     db_path: str
-    """Location/handle of the backing store (informational; may be a URI for
-    non-file backends)."""
+    """Location/handle of the backing store (informational; may be a URI
+    for non-file backends)."""
 
-    # -- write primitives -----------------------------------------------------
+    # -- memories aggregate ----------------------------------------------------
 
-    def execute(self, sql: str, params: Sequence[Any] = ()) -> int:
-        """Run a single write statement in its own transaction.
-
-        Returns the number of affected rows. Used for one-shot INSERT /
-        UPDATE / DELETE where only the row count matters.
-        """
+    def save_memory(self, record: MemoryRecord) -> None:
+        """Insert or overwrite a memory row keyed by ``memory_id``."""
         ...
 
-    # -- read primitives ------------------------------------------------------
-
-    def query_one(self, sql: str, params: Sequence[Any] = ()) -> Optional[Any]:
-        """Return the first matching row, or ``None``."""
+    def get_memory(self, memory_id: str) -> Optional[MemoryRecord]:
+        """Fetch one memory by id regardless of status, or ``None``."""
         ...
 
-    def query_rows(self, sql: str, params: Sequence[Any] = ()) -> Sequence[Any]:
-        """Return all matching rows as a sequence."""
+    def list_memories(
+        self, status: str = "active", memory_type: Optional[str] = None
+    ) -> List[MemoryRecord]:
+        """List memories for this conf_uid, optionally filtered by status
+        and memory_type, ordered by importance then recency."""
         ...
 
-    # -- row mapping ----------------------------------------------------------
-
-    def row_to_memory_record(self, row: Any) -> Any:
-        """Map a provider-native row to a ``MemoryRecord``.
-
-        Declared on the provider (not the repository) because the row
-        layout is a storage concern: a non-SQL provider supplies its own
-        mapping.
-        """
+    def list_all_memories(self) -> List[MemoryRecord]:
+        """List every memory (any status) for this conf_uid."""
         ...
 
-    # -- transactional scope --------------------------------------------------
-
-    def transaction(self) -> AbstractContextManager:
-        """Open an atomic write scope.
-
-        Yields a ``StorageTransaction``. Nested or stepwise multi-statement
-        writes (read-then-write UPSERT, batched UPDATE) go through this so
-        atomicity and lock acquisition stay identical to the pre-refactor
-        ``with provider._lock, provider._conn:`` blocks.
-        """
+    def delete_memory(self, memory_id: str) -> bool:
+        """Delete one memory. Returns True when a row was removed."""
         ...
 
-    # -- lifecycle ------------------------------------------------------------
+    def find_active_by_content(self, content: str) -> Optional[MemoryRecord]:
+        """Exact-content lookup over active memories (dedup support)."""
+        ...
+
+    def count_memories(self, status: str = "active") -> int:
+        """Count memories with the given status for this conf_uid."""
+        ...
+
+    def mark_used(self, memory_ids: Sequence[str]) -> None:
+        """Bump ``use_count`` / ``last_used_at`` for the given memories
+        in one atomic batch."""
+        ...
+
+    # -- keywords aggregate ----------------------------------------------------
+
+    def upsert_keyword(self, keyword: str, category: str) -> None:
+        """Record one sighting of a keyword: hit_count +1 on an existing
+        (keyword, category) row, insert otherwise. Atomic."""
+        ...
+
+    def list_keywords(self, limit: int = 200) -> List[KeywordRecord]:
+        """Top keywords by hit_count then recency."""
+        ...
+
+    def delete_keyword(self, keyword: str, category: str) -> bool:
+        """Delete one keyword row. Returns True when a row was removed."""
+        ...
+
+    def count_keywords(self) -> int:
+        """Count keyword rows for this conf_uid."""
+        ...
+
+    # -- user state aggregate --------------------------------------------------
+
+    def get_state(self) -> Optional[UserState]:
+        """Load the rolling user state, or ``None`` when never saved."""
+        ...
+
+    def save_state(self, state: UserState) -> None:
+        """Persist the user state row (fields written as given; timestamp
+        stamping is a repository rule, not a storage one)."""
+        ...
+
+    # -- summary aggregate -----------------------------------------------------
+
+    def get_summary(self) -> str:
+        """Load the rolling conversation summary ('' when absent)."""
+        ...
+
+    def save_summary(self, text: str, turn_count: int) -> None:
+        """Persist the summary text with the given turn count."""
+        ...
+
+    def get_turn_count(self) -> int:
+        """Read the persisted turn count (0 when absent)."""
+        ...
+
+    def bump_turn_count(self) -> int:
+        """Increment the turn count atomically and return the new value."""
+        ...
+
+    # -- lifecycle -------------------------------------------------------------
 
     def close(self) -> None:
         """Release the underlying connection/resources."""
