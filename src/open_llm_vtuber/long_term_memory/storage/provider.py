@@ -39,11 +39,12 @@ from typing import TYPE_CHECKING, Any, List, Optional, Protocol, Sequence, runti
 
 from ..schemas import KeywordRecord, MemoryRecord, UserState
 
-if TYPE_CHECKING:  # Phase-4..7 domain objects; runtime typing stays loose
+if TYPE_CHECKING:  # Phase-4..8 domain objects; runtime typing stays loose
     from ...experience.schemas import ExperienceRecord
     from ...reflection.schemas import ReflectionRecord
     from ...lesson.schemas import LessonRecord
     from ...strategy.schemas import StrategyRecord
+    from ...evaluation.schemas import EvaluationRecord
 
 
 @runtime_checkable
@@ -249,6 +250,33 @@ class StorageProvider(Protocol):
 
     def count_strategies(self) -> int:
         """Count strategies for this conf_uid."""
+        ...
+
+    # -- evaluations aggregate (Phase 8) ----------------------------------------------
+
+    def save_evaluation(self, record: "EvaluationRecord") -> None:
+        """Insert or overwrite an evaluation record keyed by its
+        ``evaluation_id`` (EvaluationRecord domain object)."""
+        ...
+
+    def get_evaluation(self, evaluation_id: str) -> Optional["EvaluationRecord"]:
+        """Fetch one evaluation by id, or ``None``."""
+        ...
+
+    def list_evaluations(self, limit: int = 200) -> List["EvaluationRecord"]:
+        """Evaluations for this conf_uid, newest first."""
+        ...
+
+    def list_evaluations_by_strategy(self, strategy_id: str) -> List["EvaluationRecord"]:
+        """All evaluations of one strategy (reverse trace)."""
+        ...
+
+    def delete_evaluation(self, evaluation_id: str) -> bool:
+        """Delete one evaluation. True when a row was removed."""
+        ...
+
+    def count_evaluations(self) -> int:
+        """Count evaluations for this conf_uid."""
         ...
 
     # -- lifecycle -------------------------------------------------------------

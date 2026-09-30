@@ -210,6 +210,32 @@ class SQLiteStorageProvider:
             self._conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_str_conf ON strategies(conf_uid, created_at)"
             )
+            # Phase 8: strategy applicability judgments
+            # (additive — existing .db files gain the table on next open)
+            self._conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS evaluations (
+                    evaluation_id TEXT PRIMARY KEY,
+                    conf_uid TEXT NOT NULL,
+                    strategy_id TEXT NOT NULL,
+                    applicable INTEGER DEFAULT 0,
+                    relevance REAL DEFAULT 0,
+                    confidence REAL DEFAULT 0,
+                    condition_match REAL DEFAULT 0,
+                    reason TEXT DEFAULT '',
+                    evidence TEXT NOT NULL DEFAULT '[]',
+                    metadata TEXT NOT NULL DEFAULT '{}',
+                    created_at REAL DEFAULT 0,
+                    updated_at REAL DEFAULT 0
+                )
+                """
+            )
+            self._conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_evl_conf ON evaluations(conf_uid, created_at)"
+            )
+            self._conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_evl_strategy ON evaluations(strategy_id)"
+            )
 
     # -- private row mappers ----------------------------------------------------
 
@@ -711,6 +737,75 @@ class SQLiteStorageProvider:
             ).fetchone()
         return int(row["cnt"]) if row else 0
 
+    # -- evaluations aggregate (Phase 8) ---------------------------------------------
+
+    def save_evaluation(self, record) -> None:
+        with self._lock, self._conn:
+            self._conn.execute(
+                """
+                INSERT OR REPLACE INTO evaluations
+                (evaluation_id, conf_uid, strategy_id, applicable,
+                 relevance, confidence, condition_match, reason,
+                 evidence, metadata, created_at, updated_at)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+                """,
+                (
+                    record.evaluation_id,
+                    record.conf_uid,
+                    record.strategy_id,
+                    1 if record.applicable else 0,
+                    record.relevance,
+                    record.confidence,
+                    record.condition_match,
+                    record.reason,
+                    json.dumps(record.evidence, ensure_ascii=False),
+                    json.dumps(record.metadata, ensure_ascii=False),
+                    record.created_at,
+                    record.updated_at,
+                ),
+            )
+
+    def get_evaluation(self, evaluation_id: str):
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM evaluations WHERE evaluation_id=?", (evaluation_id,)
+            ).fetchone()
+        return _evaluation_from_row(row) if row else None
+
+    def list_evaluations(self, limit: int = 200) -> List:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM evaluations WHERE conf_uid=? "
+                "ORDER BY created_at DESC LIMIT ?",
+                (self.conf_uid, limit),
+            ).fetchall()
+        return [_evaluation_from_row(r) for r in rows]
+
+    def list_evaluations_by_strategy(self, strategy_id: str) -> List:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM evaluations WHERE conf_uid=? AND strategy_id=? "
+                "ORDER BY created_at DESC",
+                (self.conf_uid, strategy_id),
+            ).fetchall()
+        return [_evaluation_from_row(r) for r in rows]
+
+    def delete_evaluation(self, evaluation_id: str) -> bool:
+        with self._lock, self._conn:
+            affected = self._conn.execute(
+                "DELETE FROM evaluations WHERE evaluation_id=? AND conf_uid=?",
+                (evaluation_id, self.conf_uid),
+            ).rowcount
+        return affected > 0
+
+    def count_evaluations(self) -> int:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT COUNT(*) AS cnt FROM evaluations WHERE conf_uid=?",
+                (self.conf_uid,),
+            ).fetchone()
+        return int(row["cnt"]) if row else 0
+
     # -- lifecycle -------------------------------------------------------------
 
     def close(self) -> None:
@@ -792,6 +887,26 @@ def _strategy_from_row(row: sqlite3.Row):
         recommendation=row["recommendation"] or "",
         evidence=json.loads(row["evidence"] or "[]"),
         confidence=float(row["confidence"] or 0.5),
+        metadata=json.loads(row["metadata"] or "{}"),
+        created_at=float(row["created_at"] or 0.0),
+        updated_at=float(row["updated_at"] or 0.0),
+    )
+
+
+def _evaluation_from_row(row: sqlite3.Row):
+    """sqlite Row -> EvaluationRecord (lazy import, same cycle reason)."""
+    from ...evaluation.schemas import EvaluationRecord  # noqa: PLC0415
+
+    return EvaluationRecord(
+        evaluation_id=row["evaluation_id"],
+        conf_uid=row["conf_uid"],
+        strategy_id=row["strategy_id"] or "",
+        applicable=bool(row["applicable"]),
+        relevance=float(row["relevance"] or 0.0),
+        confidence=float(row["confidence"] or 0.0),
+        condition_match=float(row["condition_match"] or 0.0),
+        reason=row["reason"] or "",
+        evidence=json.loads(row["evidence"] or "[]"),
         metadata=json.loads(row["metadata"] or "{}"),
         created_at=float(row["created_at"] or 0.0),
         updated_at=float(row["updated_at"] or 0.0),

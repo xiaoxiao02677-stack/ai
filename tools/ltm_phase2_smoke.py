@@ -470,6 +470,41 @@ class FakeStorageProvider:
             self._ck()
             return len(getattr(self, "_strategies", {}))
 
+    # Phase 8: evaluations aggregate (minimal in-memory implementation so
+    # the fake keeps satisfying the extended StorageProvider protocol)
+    def save_evaluation(self, record):
+        with self._lock:
+            self._ck()
+            self._evaluations = getattr(self, "_evaluations", {})
+            self._evaluations[record.evaluation_id] = record
+
+    def get_evaluation(self, evaluation_id):
+        with self._lock:
+            self._ck()
+            return getattr(self, "_evaluations", {}).get(evaluation_id)
+
+    def list_evaluations(self, limit=200):
+        with self._lock:
+            self._ck()
+            out = list(getattr(self, "_evaluations", {}).values())
+        out.sort(key=lambda r: -r.created_at)
+        return out[:limit]
+
+    def list_evaluations_by_strategy(self, strategy_id):
+        return [r for r in self.list_evaluations(limit=10000)
+                if r.strategy_id == strategy_id]
+
+    def delete_evaluation(self, evaluation_id):
+        with self._lock:
+            self._ck()
+            evs = getattr(self, "_evaluations", {})
+            return evs.pop(evaluation_id, None) is not None
+
+    def count_evaluations(self):
+        with self._lock:
+            self._ck()
+            return len(getattr(self, "_evaluations", {}))
+
     def close(self):
         self.closed = True
 

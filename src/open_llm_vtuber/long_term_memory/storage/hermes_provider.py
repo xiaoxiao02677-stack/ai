@@ -120,6 +120,7 @@ class _Sidecar:
             "reflections": [],   # Phase 5: ReflectionRecord dicts (LTM-only aggregate)
             "lessons": [],        # Phase 6: LessonRecord dicts (LTM-only aggregate)
             "strategies": [],     # Phase 7: StrategyRecord dicts (LTM-only aggregate)
+            "evaluations": [],    # Phase 8: EvaluationRecord dicts (LTM-only aggregate)
         }
         self._load()
 
@@ -385,6 +386,47 @@ class _Sidecar:
     def count_strategies(self) -> int:
         with self._lock:
             return len(self._data["strategies"])
+
+    # -- evaluations (Phase 8) ---------------------------------------------------------
+
+    def save_evaluation(self, record_dict: Dict[str, Any]) -> None:
+        with self._lock:
+            evs = self._data["evaluations"]
+            for i, ev in enumerate(evs):
+                if ev.get("evaluation_id") == record_dict["evaluation_id"]:
+                    evs[i] = record_dict   # overwrite (update path)
+                    self._flush()
+                    return
+            evs.append(record_dict)
+            self._flush()
+
+    def list_evaluations(self, limit: int = 200) -> List[Dict[str, Any]]:
+        with self._lock:
+            out = list(self._data["evaluations"])
+        out.sort(key=lambda e: -(e.get("created_at") or 0.0))
+        return out[:limit]
+
+    def list_evaluations_by_strategy(self, strategy_id: str) -> List[Dict[str, Any]]:
+        with self._lock:
+            out = [e for e in self._data["evaluations"]
+                   if e.get("strategy_id") == strategy_id]
+        out.sort(key=lambda e: -(e.get("created_at") or 0.0))
+        return out
+
+    def delete_evaluation(self, evaluation_id: str) -> bool:
+        with self._lock:
+            before = len(self._data["evaluations"])
+            self._data["evaluations"] = [
+                e for e in self._data["evaluations"]
+                if e.get("evaluation_id") != evaluation_id]
+            changed = len(self._data["evaluations"]) != before
+            if changed:
+                self._flush()
+        return changed
+
+    def count_evaluations(self) -> int:
+        with self._lock:
+            return len(self._data["evaluations"])
 
 
 class HermesStorageProvider:
@@ -799,6 +841,36 @@ class HermesStorageProvider:
 
     def count_strategies(self) -> int:
         return self._sidecar.count_strategies()
+
+    # -- evaluations aggregate (Phase 8) ----------------------------------------------
+
+    def save_evaluation(self, record) -> None:
+        # Hermes has no evaluation concept; evaluations are an LTM-domain
+        # aggregate persisted in the sidecar (same pattern as strategies)
+        self._sidecar.save_evaluation(record.to_dict())
+
+    def get_evaluation(self, evaluation_id: str):
+        from ...evaluation.schemas import EvaluationRecord  # lazy: avoid cycle
+        for d in self._sidecar.list_evaluations(limit=10000):
+            if d.get("evaluation_id") == evaluation_id:
+                return EvaluationRecord.from_dict(d)
+        return None
+
+    def list_evaluations(self, limit: int = 200) -> List:
+        from ...evaluation.schemas import EvaluationRecord  # lazy: avoid cycle
+        return [EvaluationRecord.from_dict(d)
+                for d in self._sidecar.list_evaluations(limit=limit)]
+
+    def list_evaluations_by_strategy(self, strategy_id: str) -> List:
+        from ...evaluation.schemas import EvaluationRecord  # lazy: avoid cycle
+        return [EvaluationRecord.from_dict(d)
+                for d in self._sidecar.list_evaluations_by_strategy(strategy_id)]
+
+    def delete_evaluation(self, evaluation_id: str) -> bool:
+        return self._sidecar.delete_evaluation(evaluation_id)
+
+    def count_evaluations(self) -> int:
+        return self._sidecar.count_evaluations()
 
     # -- lifecycle ----------------------------------------------------------------------
 
