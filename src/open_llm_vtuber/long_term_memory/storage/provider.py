@@ -39,8 +39,9 @@ from typing import TYPE_CHECKING, Any, List, Optional, Protocol, Sequence, runti
 
 from ..schemas import KeywordRecord, MemoryRecord, UserState
 
-if TYPE_CHECKING:  # Phase-4 domain object; runtime typing stays loose (Any)
+if TYPE_CHECKING:  # Phase-4/5 domain objects; runtime typing stays loose
     from ...experience.schemas import ExperienceRecord
+    from ...reflection.schemas import ReflectionRecord
 
 
 @runtime_checkable
@@ -169,6 +170,29 @@ class StorageProvider(Protocol):
 
     def count_experiences(self) -> int:
         """Count experiences for this conf_uid."""
+        ...
+
+    # -- reflections aggregate (Phase 5) ------------------------------------------
+
+    def save_reflection(self, record: "ReflectionRecord") -> None:
+        """Insert or overwrite a reflection record keyed by its
+        ``reflection_id`` (ReflectionRecord domain object)."""
+        ...
+
+    def get_reflection(self, reflection_id: str) -> Optional["ReflectionRecord"]:
+        """Fetch one reflection by id, or ``None``."""
+        ...
+
+    def list_reflections(self, limit: int = 200) -> List["ReflectionRecord"]:
+        """Most recent reflections for this conf_uid, newest first."""
+        ...
+
+    def delete_reflection(self, reflection_id: str) -> bool:
+        """Delete one reflection. True when a row was removed."""
+        ...
+
+    def count_reflections(self) -> int:
+        """Count reflections for this conf_uid."""
         ...
 
     # -- lifecycle -------------------------------------------------------------

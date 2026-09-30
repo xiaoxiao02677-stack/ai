@@ -369,6 +369,37 @@ class FakeStorageProvider:
             self._ck()
             return len(getattr(self, "_experiences", {}))
 
+    # Phase 5: reflections aggregate (minimal in-memory implementation so
+    # the fake keeps satisfying the extended StorageProvider protocol)
+    def save_reflection(self, record):
+        with self._lock:
+            self._ck()
+            self._reflections = getattr(self, "_reflections", {})
+            self._reflections[record.reflection_id] = record
+
+    def get_reflection(self, reflection_id):
+        with self._lock:
+            self._ck()
+            return getattr(self, "_reflections", {}).get(reflection_id)
+
+    def list_reflections(self, limit=200):
+        with self._lock:
+            self._ck()
+            out = list(getattr(self, "_reflections", {}).values())
+        out.sort(key=lambda r: -r.created_at)
+        return out[:limit]
+
+    def delete_reflection(self, reflection_id):
+        with self._lock:
+            self._ck()
+            fls = getattr(self, "_reflections", {})
+            return fls.pop(reflection_id, None) is not None
+
+    def count_reflections(self):
+        with self._lock:
+            self._ck()
+            return len(getattr(self, "_reflections", {}))
+
     def close(self):
         self.closed = True
 

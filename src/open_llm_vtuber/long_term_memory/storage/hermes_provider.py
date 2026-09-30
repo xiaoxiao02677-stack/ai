@@ -117,6 +117,7 @@ class _Sidecar:
             "summary": "",
             "turn_count": 0,
             "experiences": [],   # Phase 4: ExperienceRecord dicts (LTM-only aggregate)
+            "reflections": [],   # Phase 5: ReflectionRecord dicts (LTM-only aggregate)
         }
         self._load()
 
@@ -280,6 +281,40 @@ class _Sidecar:
     def count_experiences(self) -> int:
         with self._lock:
             return len(self._data["experiences"])
+
+    # -- reflections (Phase 5) ------------------------------------------------------
+
+    def save_reflection(self, record_dict: Dict[str, Any]) -> None:
+        with self._lock:
+            fls = self._data["reflections"]
+            for i, f in enumerate(fls):
+                if f.get("reflection_id") == record_dict["reflection_id"]:
+                    fls[i] = record_dict   # overwrite (update path)
+                    self._flush()
+                    return
+            fls.append(record_dict)
+            self._flush()
+
+    def list_reflections(self, limit: int = 200) -> List[Dict[str, Any]]:
+        with self._lock:
+            out = list(self._data["reflections"])
+        out.sort(key=lambda f: -(f.get("created_at") or 0.0))
+        return out[:limit]
+
+    def delete_reflection(self, reflection_id: str) -> bool:
+        with self._lock:
+            before = len(self._data["reflections"])
+            self._data["reflections"] = [
+                f for f in self._data["reflections"]
+                if f.get("reflection_id") != reflection_id]
+            changed = len(self._data["reflections"]) != before
+            if changed:
+                self._flush()
+        return changed
+
+    def count_reflections(self) -> int:
+        with self._lock:
+            return len(self._data["reflections"])
 
 
 class HermesStorageProvider:
@@ -611,6 +646,31 @@ class HermesStorageProvider:
 
     def count_experiences(self) -> int:
         return self._sidecar.count_experiences()
+
+    # -- reflections aggregate (Phase 5) ------------------------------------------
+
+    def save_reflection(self, record) -> None:
+        # Hermes has no reflection concept; reflections are an LTM-domain
+        # aggregate persisted in the sidecar (same pattern as experiences)
+        self._sidecar.save_reflection(record.to_dict())
+
+    def get_reflection(self, reflection_id: str):
+        from ...reflection.schemas import ReflectionRecord  # lazy: avoid cycle
+        for d in self._sidecar.list_reflections(limit=10000):
+            if d.get("reflection_id") == reflection_id:
+                return ReflectionRecord.from_dict(d)
+        return None
+
+    def list_reflections(self, limit: int = 200) -> List:
+        from ...reflection.schemas import ReflectionRecord  # lazy: avoid cycle
+        return [ReflectionRecord.from_dict(d)
+                for d in self._sidecar.list_reflections(limit=limit)]
+
+    def delete_reflection(self, reflection_id: str) -> bool:
+        return self._sidecar.delete_reflection(reflection_id)
+
+    def count_reflections(self) -> int:
+        return self._sidecar.count_reflections()
 
     # -- lifecycle ----------------------------------------------------------------------
 

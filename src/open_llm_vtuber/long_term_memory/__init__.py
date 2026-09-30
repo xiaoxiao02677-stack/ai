@@ -93,6 +93,15 @@ _DEFAULT_CONFIG: Dict[str, Any] = {
     "experience": {
         "enabled": True,
     },
+    # Phase 5 reflection (fact-only observations over experiences; see
+    # the reflection/ package — offline/batch analysis, never in the
+    # chat path)
+    "reflection": {
+        "enabled": True,
+        "llm_analysis": True,   # LLM refinement toggle (needs an attached LLM)
+        "batch_size": 20,       # max experiences per LLM call
+        "llm_timeout": 60.0,
+    },
     # storage backend: "sqlite" (default) | "hermes" (REST adapter over
     # the ai-companion Hermes Memory API; see storage/provider_factory.py)
     "storage": {

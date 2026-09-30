@@ -147,6 +147,29 @@ class SQLiteStorageProvider:
             self._conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_exp_conf ON experiences(conf_uid, finalized_at)"
             )
+            # Phase 5: derived fact-only observations over experiences
+            # (additive — existing .db files gain the table on next open)
+            self._conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS reflections (
+                    reflection_id TEXT PRIMARY KEY,
+                    conf_uid TEXT NOT NULL,
+                    source_experience_ids TEXT NOT NULL DEFAULT '[]',
+                    time_window_start REAL DEFAULT 0,
+                    time_window_end REAL DEFAULT 0,
+                    reflection_type TEXT DEFAULT 'interaction_pattern',
+                    observation TEXT DEFAULT '',
+                    evidence TEXT NOT NULL DEFAULT '[]',
+                    confidence REAL DEFAULT 0.5,
+                    metadata TEXT NOT NULL DEFAULT '{}',
+                    created_at REAL DEFAULT 0,
+                    updated_at REAL DEFAULT 0
+                )
+                """
+            )
+            self._conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_rfl_conf ON reflections(conf_uid, created_at)"
+            )
 
     # -- private row mappers ----------------------------------------------------
 
@@ -466,6 +489,67 @@ class SQLiteStorageProvider:
             ).fetchone()
         return int(row["cnt"]) if row else 0
 
+    # -- reflections aggregate (Phase 5) ------------------------------------------
+
+    def save_reflection(self, record) -> None:
+        with self._lock, self._conn:
+            self._conn.execute(
+                """
+                INSERT OR REPLACE INTO reflections
+                (reflection_id, conf_uid, source_experience_ids,
+                 time_window_start, time_window_end, reflection_type,
+                 observation, evidence, confidence, metadata,
+                 created_at, updated_at)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+                """,
+                (
+                    record.reflection_id,
+                    record.conf_uid,
+                    json.dumps(record.source_experience_ids, ensure_ascii=False),
+                    record.time_window_start,
+                    record.time_window_end,
+                    record.reflection_type,
+                    record.observation,
+                    json.dumps(record.evidence, ensure_ascii=False),
+                    record.confidence,
+                    json.dumps(record.metadata, ensure_ascii=False),
+                    record.created_at,
+                    record.updated_at,
+                ),
+            )
+
+    def get_reflection(self, reflection_id: str):
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM reflections WHERE reflection_id=?", (reflection_id,)
+            ).fetchone()
+        return _reflection_from_row(row) if row else None
+
+    def list_reflections(self, limit: int = 200) -> List:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM reflections WHERE conf_uid=? "
+                "ORDER BY created_at DESC LIMIT ?",
+                (self.conf_uid, limit),
+            ).fetchall()
+        return [_reflection_from_row(r) for r in rows]
+
+    def delete_reflection(self, reflection_id: str) -> bool:
+        with self._lock, self._conn:
+            affected = self._conn.execute(
+                "DELETE FROM reflections WHERE reflection_id=? AND conf_uid=?",
+                (reflection_id, self.conf_uid),
+            ).rowcount
+        return affected > 0
+
+    def count_reflections(self) -> int:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT COUNT(*) AS cnt FROM reflections WHERE conf_uid=?",
+                (self.conf_uid,),
+            ).fetchone()
+        return int(row["cnt"]) if row else 0
+
     # -- lifecycle -------------------------------------------------------------
 
     def close(self) -> None:
@@ -494,6 +578,26 @@ def _experience_from_row(row: sqlite3.Row):
         metadata=json.loads(row["metadata"] or "{}"),
         started_at=float(row["started_at"] or 0.0),
         finalized_at=float(row["finalized_at"] or 0.0),
+        created_at=float(row["created_at"] or 0.0),
+        updated_at=float(row["updated_at"] or 0.0),
+    )
+
+
+def _reflection_from_row(row: sqlite3.Row):
+    """sqlite Row -> ReflectionRecord (lazy import, same cycle reason)."""
+    from ...reflection.schemas import ReflectionRecord  # noqa: PLC0415
+
+    return ReflectionRecord(
+        reflection_id=row["reflection_id"],
+        conf_uid=row["conf_uid"],
+        source_experience_ids=json.loads(row["source_experience_ids"] or "[]"),
+        time_window_start=float(row["time_window_start"] or 0.0),
+        time_window_end=float(row["time_window_end"] or 0.0),
+        reflection_type=row["reflection_type"] or "interaction_pattern",
+        observation=row["observation"] or "",
+        evidence=json.loads(row["evidence"] or "[]"),
+        confidence=float(row["confidence"] or 0.5),
+        metadata=json.loads(row["metadata"] or "{}"),
         created_at=float(row["created_at"] or 0.0),
         updated_at=float(row["updated_at"] or 0.0),
     )
