@@ -121,6 +121,7 @@ class _Sidecar:
             "lessons": [],        # Phase 6: LessonRecord dicts (LTM-only aggregate)
             "strategies": [],     # Phase 7: StrategyRecord dicts (LTM-only aggregate)
             "evaluations": [],    # Phase 8: EvaluationRecord dicts (LTM-only aggregate)
+            "decisions": [],      # Phase 9: DecisionRecord dicts (LTM-only aggregate)
         }
         self._load()
 
@@ -427,6 +428,54 @@ class _Sidecar:
     def count_evaluations(self) -> int:
         with self._lock:
             return len(self._data["evaluations"])
+
+    # -- decisions (Phase 9) ---------------------------------------------------------
+
+    def save_decision(self, record_dict: Dict[str, Any]) -> None:
+        with self._lock:
+            dcs = self._data["decisions"]
+            for i, dc in enumerate(dcs):
+                if dc.get("decision_id") == record_dict["decision_id"]:
+                    dcs[i] = record_dict   # overwrite (update path)
+                    self._flush()
+                    return
+            dcs.append(record_dict)
+            self._flush()
+
+    def list_decisions(self, limit: int = 200) -> List[Dict[str, Any]]:
+        with self._lock:
+            out = list(self._data["decisions"])
+        out.sort(key=lambda d: -(d.get("created_at") or 0.0))
+        return out[:limit]
+
+    def list_decisions_by_strategy(self, strategy_id: str) -> List[Dict[str, Any]]:
+        with self._lock:
+            out = [d for d in self._data["decisions"]
+                   if d.get("selected_strategy_id") == strategy_id]
+        out.sort(key=lambda d: -(d.get("created_at") or 0.0))
+        return out
+
+    def list_decisions_by_evaluation(self, evaluation_id: str) -> List[Dict[str, Any]]:
+        with self._lock:
+            out = [d for d in self._data["decisions"]
+                   if d.get("selected_evaluation_id") == evaluation_id]
+        out.sort(key=lambda d: -(d.get("created_at") or 0.0))
+        return out
+
+    def delete_decision(self, decision_id: str) -> bool:
+        with self._lock:
+            before = len(self._data["decisions"])
+            self._data["decisions"] = [
+                d for d in self._data["decisions"]
+                if d.get("decision_id") != decision_id]
+            changed = len(self._data["decisions"]) != before
+            if changed:
+                self._flush()
+        return changed
+
+    def count_decisions(self) -> int:
+        with self._lock:
+            return len(self._data["decisions"])
 
 
 class HermesStorageProvider:
@@ -871,6 +920,41 @@ class HermesStorageProvider:
 
     def count_evaluations(self) -> int:
         return self._sidecar.count_evaluations()
+
+    # -- decisions aggregate (Phase 9) -----------------------------------------------
+
+    def save_decision(self, record) -> None:
+        # Hermes has no decision concept; decisions are an LTM-domain
+        # aggregate persisted in the sidecar (same pattern as evaluations)
+        self._sidecar.save_decision(record.to_dict())
+
+    def get_decision(self, decision_id: str):
+        from ...decision.schemas import DecisionRecord  # lazy: avoid cycle
+        for d in self._sidecar.list_decisions(limit=10000):
+            if d.get("decision_id") == decision_id:
+                return DecisionRecord.from_dict(d)
+        return None
+
+    def list_decisions(self, limit: int = 200) -> List:
+        from ...decision.schemas import DecisionRecord  # lazy: avoid cycle
+        return [DecisionRecord.from_dict(d)
+                for d in self._sidecar.list_decisions(limit=limit)]
+
+    def list_decisions_by_strategy(self, strategy_id: str) -> List:
+        from ...decision.schemas import DecisionRecord  # lazy: avoid cycle
+        return [DecisionRecord.from_dict(d)
+                for d in self._sidecar.list_decisions_by_strategy(strategy_id)]
+
+    def list_decisions_by_evaluation(self, evaluation_id: str) -> List:
+        from ...decision.schemas import DecisionRecord  # lazy: avoid cycle
+        return [DecisionRecord.from_dict(d)
+                for d in self._sidecar.list_decisions_by_evaluation(evaluation_id)]
+
+    def delete_decision(self, decision_id: str) -> bool:
+        return self._sidecar.delete_decision(decision_id)
+
+    def count_decisions(self) -> int:
+        return self._sidecar.count_decisions()
 
     # -- lifecycle ----------------------------------------------------------------------
 

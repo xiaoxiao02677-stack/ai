@@ -39,12 +39,13 @@ from typing import TYPE_CHECKING, Any, List, Optional, Protocol, Sequence, runti
 
 from ..schemas import KeywordRecord, MemoryRecord, UserState
 
-if TYPE_CHECKING:  # Phase-4..8 domain objects; runtime typing stays loose
+if TYPE_CHECKING:  # Phase-4..9 domain objects; runtime typing stays loose
     from ...experience.schemas import ExperienceRecord
     from ...reflection.schemas import ReflectionRecord
     from ...lesson.schemas import LessonRecord
     from ...strategy.schemas import StrategyRecord
     from ...evaluation.schemas import EvaluationRecord
+    from ...decision.schemas import DecisionRecord
 
 
 @runtime_checkable
@@ -277,6 +278,37 @@ class StorageProvider(Protocol):
 
     def count_evaluations(self) -> int:
         """Count evaluations for this conf_uid."""
+        ...
+
+    # -- decisions aggregate (Phase 9) -----------------------------------------------
+
+    def save_decision(self, record: "DecisionRecord") -> None:
+        """Insert or overwrite a decision record keyed by its
+        ``decision_id`` (DecisionRecord domain object)."""
+        ...
+
+    def get_decision(self, decision_id: str) -> Optional["DecisionRecord"]:
+        """Fetch one decision by id, or ``None``."""
+        ...
+
+    def list_decisions(self, limit: int = 200) -> List["DecisionRecord"]:
+        """Decisions for this conf_uid, newest first."""
+        ...
+
+    def list_decisions_by_strategy(self, strategy_id: str) -> List["DecisionRecord"]:
+        """Decisions that selected the given strategy."""
+        ...
+
+    def list_decisions_by_evaluation(self, evaluation_id: str) -> List["DecisionRecord"]:
+        """Decisions derived from the given evaluation (reverse trace)."""
+        ...
+
+    def delete_decision(self, decision_id: str) -> bool:
+        """Delete one decision. True when a row was removed."""
+        ...
+
+    def count_decisions(self) -> int:
+        """Count decisions for this conf_uid."""
         ...
 
     # -- lifecycle -------------------------------------------------------------

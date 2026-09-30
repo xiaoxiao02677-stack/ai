@@ -236,6 +236,31 @@ class SQLiteStorageProvider:
             self._conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_evl_strategy ON evaluations(strategy_id)"
             )
+            # Phase 9: structured decisions over evaluations
+            # (additive — existing .db files gain the table on next open)
+            self._conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS decisions (
+                    decision_id TEXT PRIMARY KEY,
+                    conf_uid TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'abstain',
+                    selected_strategy_id TEXT DEFAULT '',
+                    selected_evaluation_id TEXT DEFAULT '',
+                    confidence REAL DEFAULT 0,
+                    reason TEXT DEFAULT '',
+                    evidence TEXT NOT NULL DEFAULT '[]',
+                    metadata TEXT NOT NULL DEFAULT '{}',
+                    created_at REAL DEFAULT 0,
+                    updated_at REAL DEFAULT 0
+                )
+                """
+            )
+            self._conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_dec_conf ON decisions(conf_uid, created_at)"
+            )
+            self._conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_dec_eval ON decisions(selected_evaluation_id)"
+            )
 
     # -- private row mappers ----------------------------------------------------
 
@@ -806,6 +831,83 @@ class SQLiteStorageProvider:
             ).fetchone()
         return int(row["cnt"]) if row else 0
 
+    # -- decisions aggregate (Phase 9) ----------------------------------------------
+
+    def save_decision(self, record) -> None:
+        with self._lock, self._conn:
+            self._conn.execute(
+                """
+                INSERT OR REPLACE INTO decisions
+                (decision_id, conf_uid, status, selected_strategy_id,
+                 selected_evaluation_id, confidence, reason, evidence,
+                 metadata, created_at, updated_at)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?)
+                """,
+                (
+                    record.decision_id,
+                    record.conf_uid,
+                    record.status,
+                    record.selected_strategy_id,
+                    record.selected_evaluation_id,
+                    record.confidence,
+                    record.reason,
+                    json.dumps(record.evidence, ensure_ascii=False),
+                    json.dumps(record.metadata, ensure_ascii=False),
+                    record.created_at,
+                    record.updated_at,
+                ),
+            )
+
+    def get_decision(self, decision_id: str):
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM decisions WHERE decision_id=?", (decision_id,)
+            ).fetchone()
+        return _decision_from_row(row) if row else None
+
+    def list_decisions(self, limit: int = 200) -> List:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM decisions WHERE conf_uid=? "
+                "ORDER BY created_at DESC LIMIT ?",
+                (self.conf_uid, limit),
+            ).fetchall()
+        return [_decision_from_row(r) for r in rows]
+
+    def list_decisions_by_strategy(self, strategy_id: str) -> List:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM decisions WHERE conf_uid=? AND selected_strategy_id=? "
+                "ORDER BY created_at DESC",
+                (self.conf_uid, strategy_id),
+            ).fetchall()
+        return [_decision_from_row(r) for r in rows]
+
+    def list_decisions_by_evaluation(self, evaluation_id: str) -> List:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM decisions WHERE conf_uid=? AND selected_evaluation_id=? "
+                "ORDER BY created_at DESC",
+                (self.conf_uid, evaluation_id),
+            ).fetchall()
+        return [_decision_from_row(r) for r in rows]
+
+    def delete_decision(self, decision_id: str) -> bool:
+        with self._lock, self._conn:
+            affected = self._conn.execute(
+                "DELETE FROM decisions WHERE decision_id=? AND conf_uid=?",
+                (decision_id, self.conf_uid),
+            ).rowcount
+        return affected > 0
+
+    def count_decisions(self) -> int:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT COUNT(*) AS cnt FROM decisions WHERE conf_uid=?",
+                (self.conf_uid,),
+            ).fetchone()
+        return int(row["cnt"]) if row else 0
+
     # -- lifecycle -------------------------------------------------------------
 
     def close(self) -> None:
@@ -905,6 +1007,25 @@ def _evaluation_from_row(row: sqlite3.Row):
         relevance=float(row["relevance"] or 0.0),
         confidence=float(row["confidence"] or 0.0),
         condition_match=float(row["condition_match"] or 0.0),
+        reason=row["reason"] or "",
+        evidence=json.loads(row["evidence"] or "[]"),
+        metadata=json.loads(row["metadata"] or "{}"),
+        created_at=float(row["created_at"] or 0.0),
+        updated_at=float(row["updated_at"] or 0.0),
+    )
+
+
+def _decision_from_row(row: sqlite3.Row):
+    """sqlite Row -> DecisionRecord (lazy import, same cycle reason)."""
+    from ...decision.schemas import DecisionRecord  # noqa: PLC0415
+
+    return DecisionRecord(
+        decision_id=row["decision_id"],
+        conf_uid=row["conf_uid"],
+        status=row["status"] or "abstain",
+        selected_strategy_id=row["selected_strategy_id"] or "",
+        selected_evaluation_id=row["selected_evaluation_id"] or "",
+        confidence=float(row["confidence"] or 0.0),
         reason=row["reason"] or "",
         evidence=json.loads(row["evidence"] or "[]"),
         metadata=json.loads(row["metadata"] or "{}"),

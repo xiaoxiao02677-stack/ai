@@ -505,6 +505,45 @@ class FakeStorageProvider:
             self._ck()
             return len(getattr(self, "_evaluations", {}))
 
+    # Phase 9: decisions aggregate (minimal in-memory implementation so
+    # the fake keeps satisfying the extended StorageProvider protocol)
+    def save_decision(self, record):
+        with self._lock:
+            self._ck()
+            self._decisions = getattr(self, "_decisions", {})
+            self._decisions[record.decision_id] = record
+
+    def get_decision(self, decision_id):
+        with self._lock:
+            self._ck()
+            return getattr(self, "_decisions", {}).get(decision_id)
+
+    def list_decisions(self, limit=200):
+        with self._lock:
+            self._ck()
+            out = list(getattr(self, "_decisions", {}).values())
+        out.sort(key=lambda r: -r.created_at)
+        return out[:limit]
+
+    def list_decisions_by_strategy(self, strategy_id):
+        return [r for r in self.list_decisions(limit=10000)
+                if r.selected_strategy_id == strategy_id]
+
+    def list_decisions_by_evaluation(self, evaluation_id):
+        return [r for r in self.list_decisions(limit=10000)
+                if r.selected_evaluation_id == evaluation_id]
+
+    def delete_decision(self, decision_id):
+        with self._lock:
+            self._ck()
+            dcs = getattr(self, "_decisions", {})
+            return dcs.pop(decision_id, None) is not None
+
+    def count_decisions(self):
+        with self._lock:
+            self._ck()
+            return len(getattr(self, "_decisions", {}))
+
     def close(self):
         self.closed = True
 
