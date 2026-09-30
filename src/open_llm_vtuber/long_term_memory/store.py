@@ -14,6 +14,11 @@ Every method delegates 1:1 to the matching repository. Behavior is
 byte-equivalent: SQL, locking, time side-effects (update_memory stamps
 updated_at via the repository, exactly as before).
 
+Phase-1B: the facade no longer contains any SQL. ``stats()`` used to reach
+through the provider's private lock/connection; it now composes repository
+counts. Both the facade and the repositories depend on the StorageProvider
+Protocol, not on the SQLite class.
+
 To query memories in new code, prefer MemoryRepository directly; keep
 using MemoryStore where the legacy surface is expected.
 """
@@ -126,22 +131,10 @@ class MemoryStore:
     # -- maintenance ------------------------------------------------------------
 
     def stats(self) -> Dict[str, Any]:
-        with self.provider._lock:
-            mem_active = self.provider._conn.execute(
-                "SELECT COUNT(*) FROM memories WHERE conf_uid=? AND status='active'",
-                (self.provider.conf_uid,),
-            ).fetchone()[0]
-            mem_dep = self.provider._conn.execute(
-                "SELECT COUNT(*) FROM memories WHERE conf_uid=? AND status='deprecated'",
-                (self.provider.conf_uid,),
-            ).fetchone()[0]
-            kw = self.provider._conn.execute(
-                "SELECT COUNT(*) FROM keywords WHERE conf_uid=?", (self.provider.conf_uid,)
-            ).fetchone()[0]
         return {
-            "active_memories": int(mem_active),
-            "deprecated_memories": int(mem_dep),
-            "keywords": int(kw),
+            "active_memories": self.memories.count_memories("active"),
+            "deprecated_memories": self.memories.count_memories("deprecated"),
+            "keywords": self.keywords.count_keywords(),
             "turn_count": self.get_turn_count(),
             "db_path": self.db_path,
         }
