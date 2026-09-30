@@ -261,6 +261,36 @@ class SQLiteStorageProvider:
             self._conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_dec_eval ON decisions(selected_evaluation_id)"
             )
+            # Phase 10: side-effect-free action intents from decisions
+            # (additive — existing .db files gain the table on next open)
+            self._conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS actions (
+                    action_id TEXT PRIMARY KEY,
+                    conf_uid TEXT NOT NULL,
+                    decision_id TEXT NOT NULL,
+                    evaluation_id TEXT DEFAULT '',
+                    strategy_id TEXT DEFAULT '',
+                    action_type TEXT DEFAULT 'ACKNOWLEDGE',
+                    parameters TEXT NOT NULL DEFAULT '{}',
+                    status TEXT NOT NULL DEFAULT 'planned',
+                    reason TEXT DEFAULT '',
+                    evidence TEXT NOT NULL DEFAULT '[]',
+                    metadata TEXT NOT NULL DEFAULT '{}',
+                    created_at REAL DEFAULT 0,
+                    updated_at REAL DEFAULT 0
+                )
+                """
+            )
+            self._conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_act_conf ON actions(conf_uid, created_at)"
+            )
+            self._conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_act_decision ON actions(decision_id)"
+            )
+            self._conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_act_eval ON actions(evaluation_id)"
+            )
 
     # -- private row mappers ----------------------------------------------------
 
@@ -908,6 +938,85 @@ class SQLiteStorageProvider:
             ).fetchone()
         return int(row["cnt"]) if row else 0
 
+    # -- actions aggregate (Phase 10) ------------------------------------------------
+
+    def save_action(self, record) -> None:
+        with self._lock, self._conn:
+            self._conn.execute(
+                """
+                INSERT OR REPLACE INTO actions
+                (action_id, conf_uid, decision_id, evaluation_id,
+                 strategy_id, action_type, parameters, status, reason,
+                 evidence, metadata, created_at, updated_at)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+                """,
+                (
+                    record.action_id,
+                    record.conf_uid,
+                    record.decision_id,
+                    record.evaluation_id,
+                    record.strategy_id,
+                    record.action_type,
+                    json.dumps(record.parameters, ensure_ascii=False),
+                    record.status,
+                    record.reason,
+                    json.dumps(record.evidence, ensure_ascii=False),
+                    json.dumps(record.metadata, ensure_ascii=False),
+                    record.created_at,
+                    record.updated_at,
+                ),
+            )
+
+    def get_action(self, action_id: str):
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM actions WHERE action_id=?", (action_id,)
+            ).fetchone()
+        return _action_from_row(row) if row else None
+
+    def list_actions(self, limit: int = 200) -> List:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM actions WHERE conf_uid=? "
+                "ORDER BY created_at DESC LIMIT ?",
+                (self.conf_uid, limit),
+            ).fetchall()
+        return [_action_from_row(r) for r in rows]
+
+    def list_actions_by_decision(self, decision_id: str) -> List:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM actions WHERE conf_uid=? AND decision_id=? "
+                "ORDER BY created_at DESC",
+                (self.conf_uid, decision_id),
+            ).fetchall()
+        return [_action_from_row(r) for r in rows]
+
+    def list_actions_by_evaluation(self, evaluation_id: str) -> List:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM actions WHERE conf_uid=? AND evaluation_id=? "
+                "ORDER BY created_at DESC",
+                (self.conf_uid, evaluation_id),
+            ).fetchall()
+        return [_action_from_row(r) for r in rows]
+
+    def delete_action(self, action_id: str) -> bool:
+        with self._lock, self._conn:
+            affected = self._conn.execute(
+                "DELETE FROM actions WHERE action_id=? AND conf_uid=?",
+                (action_id, self.conf_uid),
+            ).rowcount
+        return affected > 0
+
+    def count_actions(self) -> int:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT COUNT(*) AS cnt FROM actions WHERE conf_uid=?",
+                (self.conf_uid,),
+            ).fetchone()
+        return int(row["cnt"]) if row else 0
+
     # -- lifecycle -------------------------------------------------------------
 
     def close(self) -> None:
@@ -1026,6 +1135,27 @@ def _decision_from_row(row: sqlite3.Row):
         selected_strategy_id=row["selected_strategy_id"] or "",
         selected_evaluation_id=row["selected_evaluation_id"] or "",
         confidence=float(row["confidence"] or 0.0),
+        reason=row["reason"] or "",
+        evidence=json.loads(row["evidence"] or "[]"),
+        metadata=json.loads(row["metadata"] or "{}"),
+        created_at=float(row["created_at"] or 0.0),
+        updated_at=float(row["updated_at"] or 0.0),
+    )
+
+
+def _action_from_row(row: sqlite3.Row):
+    """sqlite Row -> ActionIntentRecord (lazy import, same cycle reason)."""
+    from ...action.schemas import ActionIntentRecord  # noqa: PLC0415
+
+    return ActionIntentRecord(
+        action_id=row["action_id"],
+        conf_uid=row["conf_uid"],
+        decision_id=row["decision_id"] or "",
+        evaluation_id=row["evaluation_id"] or "",
+        strategy_id=row["strategy_id"] or "",
+        action_type=row["action_type"] or "ACKNOWLEDGE",
+        parameters=json.loads(row["parameters"] or "{}"),
+        status=row["status"] or "planned",
         reason=row["reason"] or "",
         evidence=json.loads(row["evidence"] or "[]"),
         metadata=json.loads(row["metadata"] or "{}"),

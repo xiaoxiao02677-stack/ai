@@ -39,13 +39,14 @@ from typing import TYPE_CHECKING, Any, List, Optional, Protocol, Sequence, runti
 
 from ..schemas import KeywordRecord, MemoryRecord, UserState
 
-if TYPE_CHECKING:  # Phase-4..9 domain objects; runtime typing stays loose
+if TYPE_CHECKING:  # Phase-4..10 domain objects; runtime typing stays loose
     from ...experience.schemas import ExperienceRecord
     from ...reflection.schemas import ReflectionRecord
     from ...lesson.schemas import LessonRecord
     from ...strategy.schemas import StrategyRecord
     from ...evaluation.schemas import EvaluationRecord
     from ...decision.schemas import DecisionRecord
+    from ...action.schemas import ActionIntentRecord
 
 
 @runtime_checkable
@@ -309,6 +310,37 @@ class StorageProvider(Protocol):
 
     def count_decisions(self) -> int:
         """Count decisions for this conf_uid."""
+        ...
+
+    # -- actions aggregate (Phase 10) ------------------------------------------------
+
+    def save_action(self, record: "ActionIntentRecord") -> None:
+        """Insert or overwrite an action intent keyed by its ``action_id``
+        (ActionIntentRecord domain object)."""
+        ...
+
+    def get_action(self, action_id: str) -> Optional["ActionIntentRecord"]:
+        """Fetch one action intent by id, or ``None``."""
+        ...
+
+    def list_actions(self, limit: int = 200) -> List["ActionIntentRecord"]:
+        """Action intents for this conf_uid, newest first."""
+        ...
+
+    def list_actions_by_decision(self, decision_id: str) -> List["ActionIntentRecord"]:
+        """Intents derived from the given decision (reverse trace)."""
+        ...
+
+    def list_actions_by_evaluation(self, evaluation_id: str) -> List["ActionIntentRecord"]:
+        """Intents derived from the given evaluation (reverse trace)."""
+        ...
+
+    def delete_action(self, action_id: str) -> bool:
+        """Delete one action intent. True when a row was removed."""
+        ...
+
+    def count_actions(self) -> int:
+        """Count action intents for this conf_uid."""
         ...
 
     # -- lifecycle -------------------------------------------------------------

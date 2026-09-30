@@ -122,6 +122,7 @@ class _Sidecar:
             "strategies": [],     # Phase 7: StrategyRecord dicts (LTM-only aggregate)
             "evaluations": [],    # Phase 8: EvaluationRecord dicts (LTM-only aggregate)
             "decisions": [],      # Phase 9: DecisionRecord dicts (LTM-only aggregate)
+            "actions": [],        # Phase 10: ActionIntentRecord dicts (LTM-only aggregate)
         }
         self._load()
 
@@ -476,6 +477,54 @@ class _Sidecar:
     def count_decisions(self) -> int:
         with self._lock:
             return len(self._data["decisions"])
+
+    # -- actions (Phase 10) ---------------------------------------------------------
+
+    def save_action(self, record_dict: Dict[str, Any]) -> None:
+        with self._lock:
+            acts = self._data["actions"]
+            for i, a in enumerate(acts):
+                if a.get("action_id") == record_dict["action_id"]:
+                    acts[i] = record_dict   # overwrite (update path)
+                    self._flush()
+                    return
+            acts.append(record_dict)
+            self._flush()
+
+    def list_actions(self, limit: int = 200) -> List[Dict[str, Any]]:
+        with self._lock:
+            out = list(self._data["actions"])
+        out.sort(key=lambda a: -(a.get("created_at") or 0.0))
+        return out[:limit]
+
+    def list_actions_by_decision(self, decision_id: str) -> List[Dict[str, Any]]:
+        with self._lock:
+            out = [a for a in self._data["actions"]
+                   if a.get("decision_id") == decision_id]
+        out.sort(key=lambda a: -(a.get("created_at") or 0.0))
+        return out
+
+    def list_actions_by_evaluation(self, evaluation_id: str) -> List[Dict[str, Any]]:
+        with self._lock:
+            out = [a for a in self._data["actions"]
+                   if a.get("evaluation_id") == evaluation_id]
+        out.sort(key=lambda a: -(a.get("created_at") or 0.0))
+        return out
+
+    def delete_action(self, action_id: str) -> bool:
+        with self._lock:
+            before = len(self._data["actions"])
+            self._data["actions"] = [
+                a for a in self._data["actions"]
+                if a.get("action_id") != action_id]
+            changed = len(self._data["actions"]) != before
+            if changed:
+                self._flush()
+        return changed
+
+    def count_actions(self) -> int:
+        with self._lock:
+            return len(self._data["actions"])
 
 
 class HermesStorageProvider:
@@ -955,6 +1004,41 @@ class HermesStorageProvider:
 
     def count_decisions(self) -> int:
         return self._sidecar.count_decisions()
+
+    # -- actions aggregate (Phase 10) ------------------------------------------------
+
+    def save_action(self, record) -> None:
+        # Hermes has no action concept; action intents are an LTM-domain
+        # aggregate persisted in the sidecar (same pattern as decisions)
+        self._sidecar.save_action(record.to_dict())
+
+    def get_action(self, action_id: str):
+        from ...action.schemas import ActionIntentRecord  # lazy: avoid cycle
+        for d in self._sidecar.list_actions(limit=10000):
+            if d.get("action_id") == action_id:
+                return ActionIntentRecord.from_dict(d)
+        return None
+
+    def list_actions(self, limit: int = 200) -> List:
+        from ...action.schemas import ActionIntentRecord  # lazy: avoid cycle
+        return [ActionIntentRecord.from_dict(d)
+                for d in self._sidecar.list_actions(limit=limit)]
+
+    def list_actions_by_decision(self, decision_id: str) -> List:
+        from ...action.schemas import ActionIntentRecord  # lazy: avoid cycle
+        return [ActionIntentRecord.from_dict(d)
+                for d in self._sidecar.list_actions_by_decision(decision_id)]
+
+    def list_actions_by_evaluation(self, evaluation_id: str) -> List:
+        from ...action.schemas import ActionIntentRecord  # lazy: avoid cycle
+        return [ActionIntentRecord.from_dict(d)
+                for d in self._sidecar.list_actions_by_evaluation(evaluation_id)]
+
+    def delete_action(self, action_id: str) -> bool:
+        return self._sidecar.delete_action(action_id)
+
+    def count_actions(self) -> int:
+        return self._sidecar.count_actions()
 
     # -- lifecycle ----------------------------------------------------------------------
 
