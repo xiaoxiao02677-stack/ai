@@ -35,15 +35,33 @@ from .schemas import ExecutionResult
 from .repository import ExecutionRepository
 from .engine import ExecutionEngine
 from .sandbox import SandboxExecutor
+from .policy import (ExecutionPolicy, PolicyDecision, GLOBAL_EXECUTION_ENABLED,
+                     POLICY_DENY, POLICY_SANDBOX, POLICY_REAL_ALLOWED,
+                     SIDE_EFFECT_LEVELS)
+from .adapter import (ExecutionAdapter, FakeExecutionAdapter, ExecutionRequest,
+                      AdapterRegistry, DEFAULT_ADAPTER_REGISTRY)
+from .gateway import ExecutionGateway
 
 __all__ = [
     "ExecutionResult",
     "ExecutionRepository",
     "ExecutionEngine",
     "SandboxExecutor",
+    "ExecutionPolicy",
+    "PolicyDecision",
+    "GLOBAL_EXECUTION_ENABLED",
+    "POLICY_DENY", "POLICY_SANDBOX", "POLICY_REAL_ALLOWED",
+    "SIDE_EFFECT_LEVELS",
+    "ExecutionAdapter",
+    "FakeExecutionAdapter",
+    "ExecutionRequest",
+    "AdapterRegistry",
+    "DEFAULT_ADAPTER_REGISTRY",
+    "ExecutionGateway",
     "is_enabled",
     "get_execution_repository",
     "get_engine",
+    "get_gateway",
 ]
 
 
@@ -77,4 +95,23 @@ def get_engine(conf_uid: str) -> Optional[ExecutionEngine]:
             config=get_config())
     except Exception as e:  # noqa: BLE001
         logger.warning(f"[SBX] engine unavailable for {conf_uid}: {e}")
+        return None
+
+
+def get_gateway(conf_uid: str) -> Optional[ExecutionGateway]:
+    """Convenience composition: the Phase-13 execution boundary (policy +
+    static adapters + resolver over the same conf-scoped provider)."""
+    if not is_enabled():
+        return None
+    try:
+        store = MemoryStore(conf_uid, config=get_config())
+        provider = store.provider
+        return ExecutionGateway(
+            ExecutionRepository(provider),
+            ActionRepository(provider),
+            DecisionRepository(provider),
+            EvaluationRepository(provider),
+            config=get_config())
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"[GWY] gateway unavailable for {conf_uid}: {e}")
         return None

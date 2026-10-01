@@ -68,7 +68,8 @@ for dom, files in (("experience", ("schemas.py", "repository.py", "engine.py")),
                    ("action", ("schemas.py", "repository.py", "engine.py",
                                "analyzer.py")),
                    ("execution", ("schemas.py", "repository.py", "engine.py",
-                                  "sandbox.py")),
+                                  "sandbox.py", "policy.py", "adapter.py",
+                                  "gateway.py")),
                    ("capability", ("schemas.py", "registry.py",
                                    "resolver.py"))):
     for rel in files:
