@@ -38,6 +38,13 @@ from .session import (DeviceSession, DeviceSessionError, DeviceRegistry,
                       DEVICE_OFFLINE, DEVICE_STALE,
                       DEVICE_PROTOCOL_MISMATCH,
                       DEVICE_CAPABILITY_UNSUPPORTED, DEVICE_MESSAGE_TYPES)
+from .observer import (DeviceObserver, DeviceState, DeviceHealth,
+                       CommandRecord, CommandHistory,
+                       MAX_COMMAND_HISTORY,
+                       LIFECYCLE_CREATED, LIFECYCLE_SENT, LIFECYCLE_ACKED,
+                       LIFECYCLE_NACKED, LIFECYCLE_REJECTED,
+                       LIFECYCLE_TIMEOUT, LIFECYCLE_FAILED,
+                       HEALTH_NOT_FOUND, HEALTH_OK)
 
 __all__ = [
     "DeviceCommand",
@@ -61,4 +68,9 @@ __all__ = [
     "GATE_OK", "DEVICE_NOT_FOUND", "DEVICE_OFFLINE", "DEVICE_STALE",
     "DEVICE_PROTOCOL_MISMATCH", "DEVICE_CAPABILITY_UNSUPPORTED",
     "DEVICE_MESSAGE_TYPES",
+    "DeviceObserver", "DeviceState", "DeviceHealth",
+    "CommandRecord", "CommandHistory", "MAX_COMMAND_HISTORY",
+    "LIFECYCLE_CREATED", "LIFECYCLE_SENT", "LIFECYCLE_ACKED",
+    "LIFECYCLE_NACKED", "LIFECYCLE_REJECTED", "LIFECYCLE_TIMEOUT",
+    "LIFECYCLE_FAILED",
 ]

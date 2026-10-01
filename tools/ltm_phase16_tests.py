@@ -76,7 +76,7 @@ for dom, files in (("experience", ("schemas.py", "repository.py", "engine.py")),
                                    "resolver.py")),
                    ("device_protocol", ("command.py", "protocol.py",
                                         "transport.py", "real_transport.py",
-                                        "ack.py", "session.py", "__init__.py"))):
+                                        "ack.py", "session.py", "observer.py", "__init__.py"))):
     for rel in files:
         shutil.copy(os.path.join(SRC_ABS, "open_llm_vtuber", dom, rel),
                     os.path.join(DOMAINS[dom], rel))

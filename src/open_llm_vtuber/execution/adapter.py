@@ -155,7 +155,7 @@ class ESP32Adapter(ExecutionAdapter):
     side_effect_level = "DEVICE"
 
     def __init__(self, capability_id: str, transport, device_id: str,
-                 protocol=None, session_registry=None):
+                 protocol=None, session_registry=None, observer=None):
         self.adapter_id = f"esp32.{capability_id.split('.', 1)[-1]}"
         self.capability_id = capability_id
         self.device_id = device_id
@@ -167,6 +167,9 @@ class ESP32Adapter(ExecutionAdapter):
         # protocol version and the operation advertised — a boundary that
         # NEVER replaces ExecutionPolicy/Gateway; both stand independently)
         self.session_registry = session_registry
+        # Phase-18 observer hook (optional, read-only): the adapter merely
+        # REPORTS lifecycle events; observation never alters execution
+        self.observer = observer
 
     def _session_gate(self, operation: str) -> Optional[str]:
         """Return a blocking reason code, or None when the gate passes.
@@ -192,12 +195,18 @@ class ESP32Adapter(ExecutionAdapter):
         # 1. validated DeviceCommand (closed schema + deterministic
         #    command_id derived from the execution provenance)
         command = DeviceCommand.from_request(request, self.device_id)
+        if self.observer is not None:
+            self.observer.observe_command_created(
+                command.command_id, self.device_id, command.operation)
 
         # 1b. Phase-17 session gate: block BEFORE any transport I/O when
         # the device is offline/stale/unknown, the protocol mismatches, or
         # the operation was never advertised (send stays 0 in these cases)
         gate_block = self._session_gate(command.operation)
         if gate_block is not None:
+            if self.observer is not None:
+                self.observer.observe_terminal(
+                    command.command_id, "REJECTED", error_code=gate_block)
             return {
                 "simulated": False,
                 "status": "DEVICE_GATE_REJECTED",
@@ -214,17 +223,25 @@ class ESP32Adapter(ExecutionAdapter):
         try:
             self.transport.send(command.command_id, message)
         except TransportError as e:
+            if self.observer is not None:
+                self.observer.observe_terminal(
+                    command.command_id, "FAILED", error_code="TRANSPORT_ERROR")
             return {
                 "simulated": False,
                 "status": "DEVICE_FAILED",
                 "reason": f"transport refused: {e}",
                 "command_id": command.command_id,
             }
+        if self.observer is not None:
+            self.observer.observe_command_sent(command.command_id)
 
         # 4. device response (transport accepted != device executed)
         try:
             response = self.transport.receive(command.command_id)
         except TransportTimeout:
+            if self.observer is not None:
+                self.observer.observe_terminal(
+                    command.command_id, "TIMEOUT", error_code="TIMEOUT")
             return {
                 "simulated": False,
                 "status": "DEVICE_TIMEOUT",
@@ -238,6 +255,10 @@ class ESP32Adapter(ExecutionAdapter):
         try:
             ack = self._decode_response(response, command)
         except (DeviceCommandError, DeviceAckError) as e:
+            if self.observer is not None:
+                self.observer.observe_terminal(
+                    command.command_id, "FAILED",
+                    error_code="INVALID_RESPONSE")
             return {
                 "simulated": False,
                 "status": "DEVICE_FAILED",
@@ -247,6 +268,10 @@ class ESP32Adapter(ExecutionAdapter):
 
         # 6. outcome: NACK carries the machine error_code; ACK requires
         #    command_id match (an ack for a different command is a failure)
+        if self.observer is not None:
+            # integrity checks live in the observer (unknown command /
+            # device forgery / duplicate / late ack all ignored there)
+            self.observer.observe_ack(ack)
         if not ack.is_success:
             return {
                 "simulated": False,
