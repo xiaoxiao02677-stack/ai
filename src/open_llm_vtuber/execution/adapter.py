@@ -132,3 +132,98 @@ def _builtin_adapters() -> Dict[str, ExecutionAdapter]:
 
 # process-scoped default registry (static definitions, like Phase 12)
 DEFAULT_ADAPTER_REGISTRY = AdapterRegistry(_builtin_adapters())
+
+
+class ESP32Adapter(ExecutionAdapter):
+    """Phase 15 ESP32 adapter SKELETON — MockTransport-backed, DEVICE level.
+
+    Composes the device-protocol layer: ExecutionRequest -> validated
+    DeviceCommand (deterministic command_id) -> DeviceProtocol.encode ->
+    Transport.send -> (mock) response -> decode -> result payload.
+
+    Declares side_effect_level="DEVICE": it can NEVER pass the Phase-13
+    ExecutionPolicy while the GLOBAL EXECUTION KILL SWITCH is OFF (the
+    default) — so even this skeleton cannot run through the default
+    gateway. It exists to prove the adapter/protocol/transport chain;
+    tests drive it via a policy-permitting composition or directly
+    (the class itself performs zero real I/O: MockTransport only).
+
+    It holds NO real network client (no requests/socket/mqtt/serial/ble).
+    FakeExecutionAdapter remains the PURE path; this class is additive.
+    """
+
+    side_effect_level = "DEVICE"
+
+    def __init__(self, capability_id: str, transport, device_id: str,
+                 protocol=None):
+        self.adapter_id = f"esp32.{capability_id.split('.', 1)[-1]}"
+        self.capability_id = capability_id
+        self.device_id = device_id
+        self.transport = transport           # Transport interface (mock)
+        from ..device_protocol import DeviceProtocol
+        self.protocol = protocol if protocol is not None else DeviceProtocol()
+
+    def run(self, request: ExecutionRequest) -> Dict[str, Any]:
+        from ..device_protocol import DeviceCommand, DeviceCommandError
+        from ..device_protocol.transport import TransportTimeout, \
+            TransportError
+
+        # 1. validated DeviceCommand (closed schema + deterministic
+        #    command_id derived from the execution provenance)
+        command = DeviceCommand.from_request(request, self.device_id)
+
+        # 2. protocol encode (validates again — never encode invalid)
+        message = self.protocol.encode(command)
+
+        # 3. transport send — command_id doubles as message_id
+        #    (idempotency: same context -> same id -> duplicate refused)
+        try:
+            self.transport.send(command.command_id, message)
+        except TransportError as e:
+            return {
+                "simulated": False,
+                "status": "DEVICE_FAILED",
+                "reason": f"transport refused: {e}",
+                "command_id": command.command_id,
+            }
+
+        # 4. mock device response (transport accepted != device executed)
+        try:
+            response = self.transport.receive(command.command_id)
+        except TransportTimeout:
+            return {
+                "simulated": False,
+                "status": "DEVICE_TIMEOUT",
+                "reason": "no device response (mock)",
+                "command_id": command.command_id,
+            }
+
+        # 5. decode + validate the response envelope (same protocol)
+        try:
+            decoded = self.protocol.decode(response)
+        except DeviceCommandError as e:
+            return {
+                "simulated": False,
+                "status": "DEVICE_FAILED",
+                "reason": f"invalid device response: {e}",
+                "command_id": command.command_id,
+            }
+
+        # mock semantics: echo of the validated command == device executed
+        # (a REAL device will return its own result envelope — future phase)
+        if decoded.command_id != command.command_id:
+            return {
+                "simulated": False,
+                "status": "DEVICE_FAILED",
+                "reason": "response command_id mismatch",
+                "command_id": command.command_id,
+            }
+        return {
+            "simulated": False,   # NOT a sandbox simulation: device-level
+            "status": "DEVICE_RESULT",
+            "command_id": command.command_id,
+            "device_id": self.device_id,
+            "operation": decoded.operation,
+            "transport_accepted": True,
+            "device_ack": True,
+        }

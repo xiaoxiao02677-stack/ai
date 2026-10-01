@@ -320,7 +320,7 @@ EXE_DIR = os.path.join(SRC_ABS, "open_llm_vtuber", "execution")
 SIDE_EFFECT_RX = re.compile(
     r"eval\(|exec\(|os\.system|subprocess|\bPopen\b|shell\s*=\s*True"
     r"|importlib|__import__|socket\.|websocket|urllib|serial|gpio|mqtt"
-    r"|requests\.(get|post|put|delete)|\bhttpx\b|aiohttp|esp32|espidf"
+    r"|requests\.(get|post|put|delete)|\bhttpx\b|aiohttp|espidf|esp-idf"
     r"|open\(.+[\"']w|\.unlink\(|os\.remove|os\.rename|os\.mkdir")
 for fn in sorted(os.listdir(EXE_DIR)):
     if not fn.endswith(".py"):
