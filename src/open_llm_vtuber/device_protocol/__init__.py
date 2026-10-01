@@ -29,6 +29,15 @@ from .transport import Transport, MockTransport, TransportTimeout, \
     TransportError
 from .real_transport import RealTCPTransport
 from .ack import DeviceAck, DeviceAckError, ACK_STATUS, ACK_ERROR_CODES
+from .session import (DeviceSession, DeviceSessionError, DeviceRegistry,
+                      DeviceHello, Heartbeat, CapabilityAdvertisement,
+                      build_heartbeat_ack, SESSION_CONNECTING,
+                      SESSION_ONLINE, SESSION_STALE, SESSION_DISCONNECTED,
+                      SESSION_REJECTED, HEARTBEAT_TIMEOUT_S,
+                      STALE_TIMEOUT_S, GATE_OK, DEVICE_NOT_FOUND,
+                      DEVICE_OFFLINE, DEVICE_STALE,
+                      DEVICE_PROTOCOL_MISMATCH,
+                      DEVICE_CAPABILITY_UNSUPPORTED, DEVICE_MESSAGE_TYPES)
 
 __all__ = [
     "DeviceCommand",
@@ -43,4 +52,13 @@ __all__ = [
     "TransportError",
     "RealTCPTransport",
     "DeviceAck", "DeviceAckError", "ACK_STATUS", "ACK_ERROR_CODES",
+    "DeviceSession", "DeviceSessionError", "DeviceRegistry",
+    "DeviceHello", "Heartbeat", "CapabilityAdvertisement",
+    "build_heartbeat_ack",
+    "SESSION_CONNECTING", "SESSION_ONLINE", "SESSION_STALE",
+    "SESSION_DISCONNECTED", "SESSION_REJECTED",
+    "HEARTBEAT_TIMEOUT_S", "STALE_TIMEOUT_S",
+    "GATE_OK", "DEVICE_NOT_FOUND", "DEVICE_OFFLINE", "DEVICE_STALE",
+    "DEVICE_PROTOCOL_MISMATCH", "DEVICE_CAPABILITY_UNSUPPORTED",
+    "DEVICE_MESSAGE_TYPES",
 ]

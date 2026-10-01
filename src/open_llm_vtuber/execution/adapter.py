@@ -155,13 +155,33 @@ class ESP32Adapter(ExecutionAdapter):
     side_effect_level = "DEVICE"
 
     def __init__(self, capability_id: str, transport, device_id: str,
-                 protocol=None):
+                 protocol=None, session_registry=None):
         self.adapter_id = f"esp32.{capability_id.split('.', 1)[-1]}"
         self.capability_id = capability_id
         self.device_id = device_id
         self.transport = transport           # Transport interface (mock)
         from ..device_protocol import DeviceProtocol
         self.protocol = protocol if protocol is not None else DeviceProtocol()
+        # Phase-17 session gate (optional: when provided, commands are
+        # blocked unless the device has an ONLINE session with matching
+        # protocol version and the operation advertised — a boundary that
+        # NEVER replaces ExecutionPolicy/Gateway; both stand independently)
+        self.session_registry = session_registry
+
+    def _session_gate(self, operation: str) -> Optional[str]:
+        """Return a blocking reason code, or None when the gate passes.
+
+        Online != authorized: this gate only checks device-side session
+        readiness (identity/session/protocol/capability). Authorization
+        remains the Gateway/Policy chain's job.
+        """
+        if self.session_registry is None:
+            return None    # no registry wired: gate not enforced (tests
+                           # that wire a registry enforce it; production
+                           # wiring is a Phase-17+ composition decision)
+        ok, code = self.session_registry.send_allowed(
+            self.device_id, operation)
+        return None if ok else code
 
     def run(self, request: ExecutionRequest) -> Dict[str, Any]:
         from ..device_protocol import (DeviceCommand, DeviceCommandError,
@@ -172,6 +192,19 @@ class ESP32Adapter(ExecutionAdapter):
         # 1. validated DeviceCommand (closed schema + deterministic
         #    command_id derived from the execution provenance)
         command = DeviceCommand.from_request(request, self.device_id)
+
+        # 1b. Phase-17 session gate: block BEFORE any transport I/O when
+        # the device is offline/stale/unknown, the protocol mismatches, or
+        # the operation was never advertised (send stays 0 in these cases)
+        gate_block = self._session_gate(command.operation)
+        if gate_block is not None:
+            return {
+                "simulated": False,
+                "status": "DEVICE_GATE_REJECTED",
+                "reason": f"session gate: {gate_block}",
+                "gate_code": gate_block,
+                "command_id": command.command_id,
+            }
 
         # 2. protocol encode (validates again — never encode invalid)
         message = self.protocol.encode(command)

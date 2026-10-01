@@ -24,7 +24,15 @@
 const char* WIFI_SSID = "YOUR_SSID";      // TODO: set before flashing
 const char* WIFI_PASS = "YOUR_PASS";      // TODO: set before flashing
 const char* DEVICE_ID  = "esp32-test-001"; // business identity (not an IP)
+const char* DEVICE_TYPE = "esp32.devboard.v1";
+const char* FIRMWARE_VERSION = "0.2.0-p17";
 const uint16_t TCP_PORT = 3333;
+const unsigned long HEARTBEAT_INTERVAL_MS = 10000;  // 10s (server stale=30s)
+
+// Phase-17 additions: session lifecycle messages. The device sends
+// DEVICE_HELLO + CAPABILITY_ADVERTISEMENT on connect and HEARTBEAT
+// periodically. These are TRANSPORT-layer events only — the firmware
+// still knows nothing about AI/prompt/personality/memory/etc.
 
 // ---- protocol constants (aligned with device_protocol/command.py) ----
 const int  PROTOCOL_VERSION = 1;
@@ -148,8 +156,44 @@ String validateCommand(const StaticJsonDocument<2048>& doc,
 
 // ---- per-connection handling ----
 void handleClient(WiFiClient client) {
+  // Phase-17 session handshake: HELLO + capability advertisement on
+  // connect (server validates both; no session, no commands accepted)
+  {
+    StaticJsonDocument<512> hello;
+    hello["message_type"] = "device_hello";
+    hello["protocol_version"] = PROTOCOL_VERSION;
+    hello["device_id"] = DEVICE_ID;
+    hello["device_type"] = DEVICE_TYPE;
+    hello["firmware_version"] = FIRMWARE_VERSION;
+    String out;
+    serializeJson(hello, out);
+    client.print(out + "\n");
+    Serial.println("[TX] device_hello");
+    StaticJsonDocument<512> adv;
+    adv["message_type"] = "capability_advertisement";
+    adv["protocol_version"] = PROTOCOL_VERSION;
+    adv["device_id"] = DEVICE_ID;
+    JsonArray ops = adv.createNestedArray("operations");
+    ops.add("TEST_ECHO");          // the ONLY operation (Phase 16 unchanged)
+    serializeJson(adv, out);
+    client.print(out + "\n");
+    Serial.println("[TX] capability_advertisement");
+  }
+  unsigned long lastBeat = millis();
   String frame = "";
   while (client.connected()) {
+    // heartbeat: transport liveness only, carries no AI state
+    if (millis() - lastBeat >= HEARTBEAT_INTERVAL_MS) {
+      lastBeat = millis();
+      StaticJsonDocument<256> hb;
+      hb["message_type"] = "heartbeat";
+      hb["protocol_version"] = PROTOCOL_VERSION;
+      hb["device_id"] = DEVICE_ID;
+      String out;
+      serializeJson(hb, out);
+      client.print(out + "\n");
+      Serial.println("[TX] heartbeat");
+    }
     while (client.available()) {
       char c = client.read();
       if (c == '\n') {
@@ -169,6 +213,16 @@ void handleClient(WiFiClient client) {
           sendAck(client, "", DEVICE_ID, "NACK", "MALFORMED_MESSAGE",
                   empty.to<JsonObject>());
           continue;
+        }
+        // Phase-17: server->device session messages carry no command —
+        // heartbeat_ack is consumed silently (liveness bookkeeping only,
+        // never a business action)
+        if (doc.is<JsonObject>()) {
+          const char* mt = doc["message_type"] | "";
+          if (strcmp(mt, "heartbeat_ack") == 0) {
+            Serial.println("[RX] heartbeat_ack (ignored)");
+            continue;
+          }
         }
         String commandId = "", operation = "", capability = "";
         JsonObject params;   // defaults to null JsonObject
