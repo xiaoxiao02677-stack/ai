@@ -39,7 +39,7 @@ from typing import TYPE_CHECKING, Any, List, Optional, Protocol, Sequence, runti
 
 from ..schemas import KeywordRecord, MemoryRecord, UserState
 
-if TYPE_CHECKING:  # Phase-4..10 domain objects; runtime typing stays loose
+if TYPE_CHECKING:  # Phase-4..11 domain objects; runtime typing stays loose
     from ...experience.schemas import ExperienceRecord
     from ...reflection.schemas import ReflectionRecord
     from ...lesson.schemas import LessonRecord
@@ -47,6 +47,7 @@ if TYPE_CHECKING:  # Phase-4..10 domain objects; runtime typing stays loose
     from ...evaluation.schemas import EvaluationRecord
     from ...decision.schemas import DecisionRecord
     from ...action.schemas import ActionIntentRecord
+    from ...execution.schemas import ExecutionResult
 
 
 @runtime_checkable
@@ -341,6 +342,37 @@ class StorageProvider(Protocol):
 
     def count_actions(self) -> int:
         """Count action intents for this conf_uid."""
+        ...
+
+    # -- executions aggregate (Phase 11) ---------------------------------------------
+
+    def save_execution(self, record: "ExecutionResult") -> None:
+        """Insert or overwrite an execution result keyed by its
+        ``execution_id`` (ExecutionResult domain object)."""
+        ...
+
+    def get_execution(self, execution_id: str) -> Optional["ExecutionResult"]:
+        """Fetch one execution result by id, or ``None``."""
+        ...
+
+    def list_executions(self, limit: int = 200) -> List["ExecutionResult"]:
+        """Execution results for this conf_uid, newest first."""
+        ...
+
+    def list_executions_by_action(self, action_id: str) -> List["ExecutionResult"]:
+        """Results of one action intent (reverse trace)."""
+        ...
+
+    def list_executions_by_decision(self, decision_id: str) -> List["ExecutionResult"]:
+        """Results derived from a given decision line (reverse trace)."""
+        ...
+
+    def delete_execution(self, execution_id: str) -> bool:
+        """Delete one execution result. True when a row was removed."""
+        ...
+
+    def count_executions(self) -> int:
+        """Count execution results for this conf_uid."""
         ...
 
     # -- lifecycle -------------------------------------------------------------

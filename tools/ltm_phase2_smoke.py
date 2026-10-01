@@ -583,6 +583,45 @@ class FakeStorageProvider:
             self._ck()
             return len(getattr(self, "_actions", {}))
 
+    # Phase 11: executions aggregate (minimal in-memory implementation so
+    # the fake keeps satisfying the extended StorageProvider protocol)
+    def save_execution(self, record):
+        with self._lock:
+            self._ck()
+            self._executions = getattr(self, "_executions", {})
+            self._executions[record.execution_id] = record
+
+    def get_execution(self, execution_id):
+        with self._lock:
+            self._ck()
+            return getattr(self, "_executions", {}).get(execution_id)
+
+    def list_executions(self, limit=200):
+        with self._lock:
+            self._ck()
+            out = list(getattr(self, "_executions", {}).values())
+        out.sort(key=lambda r: -r.created_at)
+        return out[:limit]
+
+    def list_executions_by_action(self, action_id):
+        return [r for r in self.list_executions(limit=10000)
+                if r.action_id == action_id]
+
+    def list_executions_by_decision(self, decision_id):
+        return [r for r in self.list_executions(limit=10000)
+                if r.decision_id == decision_id]
+
+    def delete_execution(self, execution_id):
+        with self._lock:
+            self._ck()
+            exs = getattr(self, "_executions", {})
+            return exs.pop(execution_id, None) is not None
+
+    def count_executions(self):
+        with self._lock:
+            self._ck()
+            return len(getattr(self, "_executions", {}))
+
     def close(self):
         self.closed = True
 

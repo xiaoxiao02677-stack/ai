@@ -291,6 +291,37 @@ class SQLiteStorageProvider:
             self._conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_act_eval ON actions(evaluation_id)"
             )
+            # Phase 11: sandbox execution results
+            # (additive — existing .db files gain the table on next open)
+            self._conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS executions (
+                    execution_id TEXT PRIMARY KEY,
+                    conf_uid TEXT NOT NULL,
+                    action_id TEXT DEFAULT '',
+                    decision_id TEXT DEFAULT '',
+                    evaluation_id TEXT DEFAULT '',
+                    strategy_id TEXT DEFAULT '',
+                    status TEXT NOT NULL DEFAULT 'REJECTED',
+                    execution_mode TEXT NOT NULL DEFAULT 'SANDBOX',
+                    result TEXT NOT NULL DEFAULT '{}',
+                    reason TEXT DEFAULT '',
+                    evidence TEXT NOT NULL DEFAULT '[]',
+                    metadata TEXT NOT NULL DEFAULT '{}',
+                    created_at REAL DEFAULT 0,
+                    updated_at REAL DEFAULT 0
+                )
+                """
+            )
+            self._conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_exe_conf ON executions(conf_uid, created_at)"
+            )
+            self._conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_exe_action ON executions(action_id)"
+            )
+            self._conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_exe_decision ON executions(decision_id)"
+            )
 
     # -- private row mappers ----------------------------------------------------
 
@@ -1017,6 +1048,86 @@ class SQLiteStorageProvider:
             ).fetchone()
         return int(row["cnt"]) if row else 0
 
+    # -- executions aggregate (Phase 11) ---------------------------------------------
+
+    def save_execution(self, record) -> None:
+        with self._lock, self._conn:
+            self._conn.execute(
+                """
+                INSERT OR REPLACE INTO executions
+                (execution_id, conf_uid, action_id, decision_id,
+                 evaluation_id, strategy_id, status, execution_mode,
+                 result, reason, evidence, metadata, created_at, updated_at)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                """,
+                (
+                    record.execution_id,
+                    record.conf_uid,
+                    record.action_id,
+                    record.decision_id,
+                    record.evaluation_id,
+                    record.strategy_id,
+                    record.status,
+                    record.execution_mode,
+                    json.dumps(record.result, ensure_ascii=False),
+                    record.reason,
+                    json.dumps(record.evidence, ensure_ascii=False),
+                    json.dumps(record.metadata, ensure_ascii=False),
+                    record.created_at,
+                    record.updated_at,
+                ),
+            )
+
+    def get_execution(self, execution_id: str):
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM executions WHERE execution_id=?", (execution_id,)
+            ).fetchone()
+        return _execution_from_row(row) if row else None
+
+    def list_executions(self, limit: int = 200) -> List:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM executions WHERE conf_uid=? "
+                "ORDER BY created_at DESC LIMIT ?",
+                (self.conf_uid, limit),
+            ).fetchall()
+        return [_execution_from_row(r) for r in rows]
+
+    def list_executions_by_action(self, action_id: str) -> List:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM executions WHERE conf_uid=? AND action_id=? "
+                "ORDER BY created_at DESC",
+                (self.conf_uid, action_id),
+            ).fetchall()
+        return [_execution_from_row(r) for r in rows]
+
+    def list_executions_by_decision(self, decision_id: str) -> List:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM executions WHERE conf_uid=? AND decision_id=? "
+                "ORDER BY created_at DESC",
+                (self.conf_uid, decision_id),
+            ).fetchall()
+        return [_execution_from_row(r) for r in rows]
+
+    def delete_execution(self, execution_id: str) -> bool:
+        with self._lock, self._conn:
+            affected = self._conn.execute(
+                "DELETE FROM executions WHERE execution_id=? AND conf_uid=?",
+                (execution_id, self.conf_uid),
+            ).rowcount
+        return affected > 0
+
+    def count_executions(self) -> int:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT COUNT(*) AS cnt FROM executions WHERE conf_uid=?",
+                (self.conf_uid,),
+            ).fetchone()
+        return int(row["cnt"]) if row else 0
+
     # -- lifecycle -------------------------------------------------------------
 
     def close(self) -> None:
@@ -1156,6 +1267,28 @@ def _action_from_row(row: sqlite3.Row):
         action_type=row["action_type"] or "ACKNOWLEDGE",
         parameters=json.loads(row["parameters"] or "{}"),
         status=row["status"] or "planned",
+        reason=row["reason"] or "",
+        evidence=json.loads(row["evidence"] or "[]"),
+        metadata=json.loads(row["metadata"] or "{}"),
+        created_at=float(row["created_at"] or 0.0),
+        updated_at=float(row["updated_at"] or 0.0),
+    )
+
+
+def _execution_from_row(row: sqlite3.Row):
+    """sqlite Row -> ExecutionResult (lazy import, same cycle reason)."""
+    from ...execution.schemas import ExecutionResult  # noqa: PLC0415
+
+    return ExecutionResult(
+        execution_id=row["execution_id"],
+        conf_uid=row["conf_uid"],
+        action_id=row["action_id"] or "",
+        decision_id=row["decision_id"] or "",
+        evaluation_id=row["evaluation_id"] or "",
+        strategy_id=row["strategy_id"] or "",
+        status=row["status"] or "REJECTED",
+        execution_mode=row["execution_mode"] or "SANDBOX",
+        result=json.loads(row["result"] or "{}"),
         reason=row["reason"] or "",
         evidence=json.loads(row["evidence"] or "[]"),
         metadata=json.loads(row["metadata"] or "{}"),

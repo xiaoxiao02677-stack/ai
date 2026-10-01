@@ -123,6 +123,7 @@ class _Sidecar:
             "evaluations": [],    # Phase 8: EvaluationRecord dicts (LTM-only aggregate)
             "decisions": [],      # Phase 9: DecisionRecord dicts (LTM-only aggregate)
             "actions": [],        # Phase 10: ActionIntentRecord dicts (LTM-only aggregate)
+            "executions": [],     # Phase 11: ExecutionResult dicts (LTM-only aggregate)
         }
         self._load()
 
@@ -525,6 +526,54 @@ class _Sidecar:
     def count_actions(self) -> int:
         with self._lock:
             return len(self._data["actions"])
+
+    # -- executions (Phase 11) -------------------------------------------------------
+
+    def save_execution(self, record_dict: Dict[str, Any]) -> None:
+        with self._lock:
+            exs = self._data["executions"]
+            for i, x in enumerate(exs):
+                if x.get("execution_id") == record_dict["execution_id"]:
+                    exs[i] = record_dict   # overwrite (update path)
+                    self._flush()
+                    return
+            exs.append(record_dict)
+            self._flush()
+
+    def list_executions(self, limit: int = 200) -> List[Dict[str, Any]]:
+        with self._lock:
+            out = list(self._data["executions"])
+        out.sort(key=lambda x: -(x.get("created_at") or 0.0))
+        return out[:limit]
+
+    def list_executions_by_action(self, action_id: str) -> List[Dict[str, Any]]:
+        with self._lock:
+            out = [x for x in self._data["executions"]
+                   if x.get("action_id") == action_id]
+        out.sort(key=lambda x: -(x.get("created_at") or 0.0))
+        return out
+
+    def list_executions_by_decision(self, decision_id: str) -> List[Dict[str, Any]]:
+        with self._lock:
+            out = [x for x in self._data["executions"]
+                   if x.get("decision_id") == decision_id]
+        out.sort(key=lambda x: -(x.get("created_at") or 0.0))
+        return out
+
+    def delete_execution(self, execution_id: str) -> bool:
+        with self._lock:
+            before = len(self._data["executions"])
+            self._data["executions"] = [
+                x for x in self._data["executions"]
+                if x.get("execution_id") != execution_id]
+            changed = len(self._data["executions"]) != before
+            if changed:
+                self._flush()
+        return changed
+
+    def count_executions(self) -> int:
+        with self._lock:
+            return len(self._data["executions"])
 
 
 class HermesStorageProvider:
@@ -1039,6 +1088,41 @@ class HermesStorageProvider:
 
     def count_actions(self) -> int:
         return self._sidecar.count_actions()
+
+    # -- executions aggregate (Phase 11) ---------------------------------------------
+
+    def save_execution(self, record) -> None:
+        # Hermes has no execution concept; results are an LTM-domain
+        # aggregate persisted in the sidecar (same pattern as actions)
+        self._sidecar.save_execution(record.to_dict())
+
+    def get_execution(self, execution_id: str):
+        from ...execution.schemas import ExecutionResult  # lazy: avoid cycle
+        for d in self._sidecar.list_executions(limit=10000):
+            if d.get("execution_id") == execution_id:
+                return ExecutionResult.from_dict(d)
+        return None
+
+    def list_executions(self, limit: int = 200) -> List:
+        from ...execution.schemas import ExecutionResult  # lazy: avoid cycle
+        return [ExecutionResult.from_dict(d)
+                for d in self._sidecar.list_executions(limit=limit)]
+
+    def list_executions_by_action(self, action_id: str) -> List:
+        from ...execution.schemas import ExecutionResult  # lazy: avoid cycle
+        return [ExecutionResult.from_dict(d)
+                for d in self._sidecar.list_executions_by_action(action_id)]
+
+    def list_executions_by_decision(self, decision_id: str) -> List:
+        from ...execution.schemas import ExecutionResult  # lazy: avoid cycle
+        return [ExecutionResult.from_dict(d)
+                for d in self._sidecar.list_executions_by_decision(decision_id)]
+
+    def delete_execution(self, execution_id: str) -> bool:
+        return self._sidecar.delete_execution(execution_id)
+
+    def count_executions(self) -> int:
+        return self._sidecar.count_executions()
 
     # -- lifecycle ----------------------------------------------------------------------
 
