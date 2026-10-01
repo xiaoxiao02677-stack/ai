@@ -184,9 +184,11 @@ check("sandbox path unaffected by kill switch (PURE independent)",
 
 # ---------------------------------------------------------------------------
 section("2. AdapterRegistry: static + fake adapter properties")
-check("default registry has exactly 3 adapters (one per builtin capability)",
+check("default registry has one fake adapter per builtin capability "
+      "(P19 adds capability.led)",
       set(DEFAULT_ADAPTER_REGISTRY.list_ids())
-      == {"capability.respond", "capability.remind", "capability.acknowledge"})
+      == {"capability.respond", "capability.remind",
+          "capability.acknowledge", "capability.led"})
 check("adapter ids deterministic (fake.respond etc.)",
       DEFAULT_ADAPTER_REGISTRY.get("capability.respond").adapter_id
       == "fake.respond")

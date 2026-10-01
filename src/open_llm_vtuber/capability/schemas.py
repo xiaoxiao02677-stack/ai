@@ -29,16 +29,28 @@ _CAP_ID_RX = re.compile(r"^capability\.[a-z][a-z0-9_]*$")
 
 
 def _validate_field_schema(name: str, fs: Dict[str, Any]) -> None:
-    """Validate one field-schema entry: {type, max_length, required}."""
+    """Validate one field-schema entry: {type, max_length, required}.
+
+    Phase 19 extends the closed field vocabulary with 'boolean' (the
+    minimal body-capability input, e.g. SET_LED {on: true}). Booleans
+    carry no length semantics — max_length must be 0.
+    """
     if not isinstance(fs, dict):
         raise ValueError(f"field schema '{name}' must be a dict")
     ftype = fs.get("type")
-    if ftype not in ("string",):
+    if ftype not in ("string", "boolean"):
         raise ValueError(
-            f"field '{name}': only 'string' fields are supported in "
-            f"Phase 12 contracts (got '{ftype}')")
-    if not isinstance(fs.get("max_length"), int) or fs["max_length"] <= 0:
-        raise ValueError(f"field '{name}' needs a positive max_length")
+            f"field '{name}': only 'string'/'boolean' fields are supported "
+            f"in contracts (got '{ftype}')")
+    if not isinstance(fs.get("max_length"), int) or fs["max_length"] < 0:
+        raise ValueError(f"field '{name}' needs a non-negative max_length")
+    if ftype == "string" and fs["max_length"] <= 0:
+        raise ValueError(
+            f"field '{name}': string fields need a positive max_length")
+    if ftype == "boolean" and fs["max_length"] != 0:
+        raise ValueError(
+            f"field '{name}': boolean fields take max_length=0 (no length "
+            f"semantics)")
     if not isinstance(fs.get("required"), bool):
         raise ValueError(f"field '{name}' needs a boolean required flag")
     desc = fs.get("description", "")
@@ -100,9 +112,9 @@ class CapabilityContract:
         """Return an error string, or None when parameters conform.
 
         Closed structure: unknown keys rejected (additionalProperties=
-        false), known keys must be typed strings within max_length,
-        required keys must be present. This is THE parameter boundary —
-        no blacklist heuristics.
+        false), known keys must match their declared type (string within
+        max_length / boolean), required keys must be present. This is
+        THE parameter boundary — no blacklist heuristics.
         """
         if not isinstance(parameters, dict):
             return "parameters must be a structured dict"
@@ -117,6 +129,11 @@ class CapabilityContract:
                         f"{self.capability_id}")
         for name, value in parameters.items():
             fs = self.input_schema[name]
+            if fs["type"] == "boolean":
+                if not isinstance(value, bool):
+                    return (f"parameter '{name}' must be boolean "
+                            f"(got {type(value).__name__})")
+                continue
             if not isinstance(value, str):
                 return (f"parameter '{name}' must be string "
                         f"(got {type(value).__name__})")

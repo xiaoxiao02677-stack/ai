@@ -96,6 +96,25 @@ def _builtin_contracts() -> Dict[str, CapabilityContract]:
                                  "description": "模拟输出：确认标记"},
             },
         ),
+        # Phase 19: the FIRST body capability. The contract only DESCRIBES
+        # the allowed input (a closed boolean) — execution still requires
+        # the full P13-P18 chain (Policy -> Gateway -> Session -> Gate ->
+        # Adapter -> Device); a contract never executes anything.
+        "capability.led": _contract(
+            "capability.led", "SET_LED",
+            "设备指示灯开关的最小身体能力（闭合布尔参数；"
+            "仅描述输入，不执行）。",
+            {
+                "on": {"type": "boolean", "max_length": 0,
+                       "required": True,
+                       "description": "灯开（true）/关（false）"},
+            },
+            {
+                "acknowledged_on": {"type": "boolean", "max_length": 0,
+                                    "required": True,
+                                    "description": "模拟输出：确认的开闭状态"},
+            },
+        ),
     }
 
 

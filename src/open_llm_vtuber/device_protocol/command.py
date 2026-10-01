@@ -27,8 +27,9 @@ from typing import Any, Dict, Optional
 # protocol version (unknown versions are REJECTED, no auto-upgrade)
 PROTOCOL_VERSION = 1
 
-# controlled operation enum — minimal Phase-15 set
-DEVICE_OPERATIONS = ("TEST_ECHO",)   # TEST / MOCK ONLY (no business ops yet)
+# controlled operation enum — Phase 19 adds SET_LED (the first body
+# operation; parameters stay closed: {'on': bool} only)
+DEVICE_OPERATIONS = ("TEST_ECHO", "SET_LED")
 
 _MAX_PARAM_VALUE_LEN = 200
 _MAX_PARAMS = 5
@@ -62,9 +63,13 @@ def _validate_parameters(parameters: Dict[str, Any]) -> None:
     for key, value in parameters.items():
         if not isinstance(key, str) or not key:
             raise DeviceCommandError("parameter keys must be non-empty strings")
+        # Phase 19: booleans are allowed values (SET_LED {on: bool}) —
+        # still closed typing, never free-form
+        if isinstance(value, bool):
+            continue
         if not isinstance(value, str):
             raise DeviceCommandError(
-                f"parameter '{key}' must be a string "
+                f"parameter '{key}' must be a string or boolean "
                 f"(got {type(value).__name__})")
         if len(value) > _MAX_PARAM_VALUE_LEN:
             raise DeviceCommandError(

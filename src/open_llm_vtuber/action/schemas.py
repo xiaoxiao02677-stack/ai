@@ -25,8 +25,11 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any, Dict, List
 
-# controlled enum — abstract, side-effect-free intents only
-ACTION_TYPES = ("RESPOND", "REMIND", "ACKNOWLEDGE")
+# controlled enum — abstract, side-effect-free intents only.
+# Phase 19 adds SET_LED: the first BODY-intent. It is still an abstract
+# intent (the ActionIntent layer never touches hardware); the body
+# action happens at the device, behind the full P13-P18 chain.
+ACTION_TYPES = ("RESPOND", "REMIND", "ACKNOWLEDGE", "SET_LED")
 
 STATUS_PLANNED = "planned"
 STATUS_REJECTED = "rejected"

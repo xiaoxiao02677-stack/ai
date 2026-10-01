@@ -170,10 +170,10 @@ def _schema_blocks_future_type():
 # ---------------------------------------------------------------------------
 section("1. Registry")
 reg = DEFAULT_REGISTRY
-check("all three builtin contracts registered",
+check("all builtin contracts registered (P19 adds capability.led)",
       {"capability.respond", "capability.remind",
-       "capability.acknowledge"} <= set(reg.list_ids()))
-check("registry len == 3", len(reg) == 3)
+       "capability.acknowledge", "capability.led"} <= set(reg.list_ids()))
+check("registry len == 4 (P19 adds capability.led)", len(reg) == 4)
 check("unknown capability lookup -> None", reg.get("capability.ghost") is None)
 c = reg.get("capability.respond")
 check("contract version validated ('1')", c is not None and c.version == "1")

@@ -123,10 +123,13 @@ class AdapterRegistry:
 
 def _builtin_adapters() -> Dict[str, ExecutionAdapter]:
     # exactly one adapter per Phase-12 builtin capability — all fake/PURE
+    # (Phase 19 adds capability.led: still the FAKE adapter; the REAL
+    # ESP32Adapter is composed explicitly with a transport + registry)
     return {
         "capability.respond": FakeExecutionAdapter("capability.respond"),
         "capability.remind": FakeExecutionAdapter("capability.remind"),
         "capability.acknowledge": FakeExecutionAdapter("capability.acknowledge"),
+        "capability.led": FakeExecutionAdapter("capability.led"),
     }
 
 
@@ -193,8 +196,15 @@ class ESP32Adapter(ExecutionAdapter):
             TransportError
 
         # 1. validated DeviceCommand (closed schema + deterministic
-        #    command_id derived from the execution provenance)
-        command = DeviceCommand.from_request(request, self.device_id)
+        #    command_id derived from the execution provenance).
+        #    Phase 19: the intent's action_type maps to the device
+        #    operation through a STRICT whitelist (SET_LED is the only
+        #    body action; anything else is the protocol test op) — the
+        #    adapter never invents operations from free text.
+        operation = ("SET_LED" if request.action_type == "SET_LED"
+                     else "TEST_ECHO")
+        command = DeviceCommand.from_request(request, self.device_id,
+                                             operation=operation)
         if self.observer is not None:
             self.observer.observe_command_created(
                 command.command_id, self.device_id, command.operation)

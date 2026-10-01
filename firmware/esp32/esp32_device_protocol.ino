@@ -25,9 +25,14 @@ const char* WIFI_SSID = "YOUR_SSID";      // TODO: set before flashing
 const char* WIFI_PASS = "YOUR_PASS";      // TODO: set before flashing
 const char* DEVICE_ID  = "esp32-test-001"; // business identity (not an IP)
 const char* DEVICE_TYPE = "esp32.devboard.v1";
-const char* FIRMWARE_VERSION = "0.2.0-p17";
+const char* FIRMWARE_VERSION = "0.3.0-p19";
 const uint16_t TCP_PORT = 3333;
 const unsigned long HEARTBEAT_INTERVAL_MS = 10000;  // 10s (server stale=30s)
+
+// Phase 19: the FIRST real body capability — onboard LED (GPIO 2 is the
+// standard ESP32 DevKit onboard LED). SET_LED only: a SPECIFIC capability,
+// never a generic SET_GPIO interface.
+const uint8_t LED_PIN = 2;
 
 // Phase-17 additions: session lifecycle messages. The device sends
 // DEVICE_HELLO + CAPABILITY_ADVERTISEMENT on connect and HEARTBEAT
@@ -135,20 +140,30 @@ String validateCommand(const StaticJsonDocument<2048>& doc,
       !prov.containsKey("strategy_id"))
     return "INVALID_SCHEMA";
 
-  // operation: controlled enum (TEST_ECHO only in Phase 16)
-  if (outOperation != "TEST_ECHO") return "UNKNOWN_OPERATION";
+  // operation: controlled enum (TEST_ECHO protocol test; SET_LED the
+  // first body operation — Phase 19)
+  if (outOperation != "TEST_ECHO" && outOperation != "SET_LED")
+    return "UNKNOWN_OPERATION";
 
-  // parameters: closed set of bounded strings
+  // parameters: closed set of bounded strings/booleans. SET_LED is
+  // STRICTLY {'on': bool} — anything else is INVALID_PARAMETERS.
   if (cmd.containsKey("parameters")) {
     JsonObject params = cmd["parameters"];
     if (!params.isNull()) {
-      if (params.size() > MAX_PARAMS) return "INVALID_PARAMETERS";
-      for (JsonPair kv : params) {
-        if (!kv.value().is<const char*>()) return "INVALID_PARAMETERS";
-        String v = String((const char*)kv.value());
-        if (v.length() > MAX_PARAM_LEN) return "INVALID_PARAMETERS";
+      if (outOperation == "SET_LED") {
+        if (params.size() != 1 || !params.containsKey("on"))
+          return "INVALID_PARAMETERS";
+        if (!params["on"].is<bool>()) return "INVALID_PARAMETERS";
+        outParams = params;
+      } else {
+        if (params.size() > MAX_PARAMS) return "INVALID_PARAMETERS";
+        for (JsonPair kv : params) {
+          if (!kv.value().is<const char*>()) return "INVALID_PARAMETERS";
+          String v = String((const char*)kv.value());
+          if (v.length() > MAX_PARAM_LEN) return "INVALID_PARAMETERS";
+        }
+        outParams = params;
       }
-      outParams = params;
     }
   }
   return "";  // valid
@@ -174,7 +189,8 @@ void handleClient(WiFiClient client) {
     adv["protocol_version"] = PROTOCOL_VERSION;
     adv["device_id"] = DEVICE_ID;
     JsonArray ops = adv.createNestedArray("operations");
-    ops.add("TEST_ECHO");          // the ONLY operation (Phase 16 unchanged)
+    ops.add("TEST_ECHO");          // protocol test operation
+    ops.add("SET_LED");            // Phase 19: first body capability
     serializeJson(adv, out);
     client.print(out + "\n");
     Serial.println("[TX] capability_advertisement");
@@ -244,10 +260,19 @@ void handleClient(WiFiClient client) {
                   "DUPLICATE_COMMAND", empty.to<JsonObject>());
           continue;
         }
-        // execute TEST_ECHO: deterministic echo of the parameters
+        // execute: TEST_ECHO echoes params; SET_LED drives the onboard
+        // LED (the first REAL body action — one specific capability,
+        // never a generic GPIO interface)
         rememberCommandId(commandId);
-        Serial.printf("[EXE] cmd=%s op=TEST_ECHO params=%d\n",
-                      commandId.c_str(), params.size());
+        if (operation == "SET_LED") {
+          bool on = params["on"] | false;
+          digitalWrite(LED_PIN, on ? HIGH : LOW);   // the body action
+          Serial.printf("[EXE] cmd=%s op=SET_LED on=%d\n",
+                        commandId.c_str(), on ? 1 : 0);
+        } else {
+          Serial.printf("[EXE] cmd=%s op=TEST_ECHO params=%d\n",
+                        commandId.c_str(), params.size());
+        }
         sendAck(client, commandId, DEVICE_ID, "ACK", "", params);
         continue;
       } else {
@@ -261,7 +286,12 @@ void handleClient(WiFiClient client) {
 
 void setup() {
   Serial.begin(115200);
-  Serial.printf("[BOOT] device_id=%s port=%d\n", DEVICE_ID, TCP_PORT);
+  Serial.printf("[BOOT] device_id=%s port=%d fw=%s\n",
+                DEVICE_ID, TCP_PORT, FIRMWARE_VERSION);
+  // Phase 19: onboard LED output (the ONLY hardware this firmware drives —
+  // a specific capability, not a generic GPIO interface)
+  pinMode(LED_PIN, OUTPUT);
+  digitalWrite(LED_PIN, LOW);      // fail-safe: OFF at boot
   WiFi.mode(WIFI_STA);
   WiFi.begin(WIFI_SSID, WIFI_PASS);
   int wait = 0;

@@ -37,10 +37,13 @@ from ..capability.schemas import RESOLVED as CAP_RESOLVED
 from .schemas import (ExecutionResult, STATUS_SIMULATED, STATUS_REJECTED)
 
 # independent Phase-11 sandbox whitelist (must ALSO be a P10 type)
-SANDBOX_ACTION_TYPES = ("RESPOND", "REMIND", "ACKNOWLEDGE")
+# Phase 19 adds SET_LED (body-intent; 'on' is a bool — the schema below
+# enforces the closed structure; the sandbox only SIMULATES it)
+SANDBOX_ACTION_TYPES = ("RESPOND", "REMIND", "ACKNOWLEDGE", "SET_LED")
 
 # legacy strict per-type parameter schema — kept as defense-in-depth;
 # the Phase-12 CONTRACT input schema is the primary authority now
+# NOTE: SET_LED's 'on' is bool — max_len is unused for bools
 _PARAM_SCHEMAS: Dict[str, Dict[str, Tuple[type, int]]] = {
     "RESPOND": {
         "style_hint": (str, 200),
@@ -52,6 +55,9 @@ _PARAM_SCHEMAS: Dict[str, Dict[str, Tuple[type, int]]] = {
     },
     "ACKNOWLEDGE": {
         "condition_hint": (str, 120),
+    },
+    "SET_LED": {
+        "on": (bool, 0),
     },
 }
 

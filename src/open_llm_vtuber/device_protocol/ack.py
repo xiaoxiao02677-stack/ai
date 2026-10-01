@@ -95,8 +95,12 @@ class DeviceAck:
             raise DeviceAckError(
                 f"echo must be a dict of at most {_MAX_ECHO_PARAMS} params")
         for key, value in self.echo.items():
+            # booleans allowed (SET_LED echoes {'on': bool}) — closed typing
+            if isinstance(value, bool):
+                continue
             if not isinstance(key, str) or not isinstance(value, str):
-                raise DeviceAckError("echo entries must be string->string")
+                raise DeviceAckError("echo entries must be string->string "
+                                     "or string->boolean")
             if len(value) > _MAX_ECHO_LEN:
                 raise DeviceAckError(
                     f"echo value for '{key}' exceeds {_MAX_ECHO_LEN} chars")

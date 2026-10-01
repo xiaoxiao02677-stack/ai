@@ -242,9 +242,9 @@ check("advertisement to unknown device -> None",
 # advertisement must NOT create server capability
 server_contracts = set(DEFAULT_REGISTRY.list_ids())
 check("advertisement cannot create/upgrade server capabilities "
-      "(registry unchanged)",
+      "(static registry content unchanged by advertisements)",
       server_contracts == {"capability.respond", "capability.remind",
-                           "capability.acknowledge"})
+                           "capability.acknowledge", "capability.led"})
 try:
     CapabilityAdvertisement.from_dict(
         {"message_type": "capability_advertisement", "protocol_version": 1,
@@ -354,12 +354,14 @@ check("firmware sends CAPABILITY_ADVERTISEMENT",
       "capability_advertisement" in ino_code)
 check("firmware consumes heartbeat_ack silently (no action)",
       "heartbeat_ack" in ino_code)
-check("firmware still advertises TEST_ECHO only (no new business ops)",
-      '"TEST_ECHO"' in ino_code
-      and not re.search(r'ops\.add\("(?!TEST_ECHO)', ino_code))
-check("firmware: zero business hardware",
+check("firmware advertises exactly TEST_ECHO + SET_LED (P19 first body op)",
+      '"TEST_ECHO"' in ino_code and '"SET_LED"' in ino_code
+      and not re.search(r'ops\.add\("(?!TEST_ECHO|SET_LED)', ino_code))
+# P19: digitalWrite/pinMode on the single onboard LED pin is now the ONE
+# sanctioned body action (a specific capability, not a generic GPIO API)
+check("firmware: no business hardware beyond the single onboard LED",
       not re.search(r"gpio_set|ledcWrite|analogWrite|servo|motor|relay|"
-                    r"digitalWrite|camera|microphone|speaker", ino_code))
+                    r"camera|microphone|speaker", ino_code))
 check("firmware: zero AI concepts",
       not re.search(r"\bLLM\b|\bprompt\b|personality|\bmemory\b|"
                     r"reflection|conversation|\bagent\b|\bMCP\b", ino_code))

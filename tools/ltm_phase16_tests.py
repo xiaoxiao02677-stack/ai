@@ -210,14 +210,21 @@ class FirmwareSimulator(threading.Thread):
                 k in prov for k in ("action_id", "decision_id",
                                     "evaluation_id", "strategy_id")):
             return self._nack(cid, "INVALID_SCHEMA")
-        if cmd["operation"] != "TEST_ECHO":
+        if cmd["operation"] not in ("TEST_ECHO", "SET_LED"):
             return self._nack(cid, "UNKNOWN_OPERATION")
         params = cmd.get("parameters", {})
-        if not isinstance(params, dict) or len(params) > 5:
+        if not isinstance(params, dict):
             return self._nack(cid, "INVALID_PARAMETERS")
-        for v in params.values():
-            if not isinstance(v, str) or len(v) > 200:
+        if cmd["operation"] == "SET_LED":
+            # strict: exactly {'on': bool}
+            if set(params.keys()) != {"on"}                     or not isinstance(params.get("on"), bool):
                 return self._nack(cid, "INVALID_PARAMETERS")
+        else:
+            if len(params) > 5:
+                return self._nack(cid, "INVALID_PARAMETERS")
+            for v in params.values():
+                if not isinstance(v, str) or len(v) > 200:
+                    return self._nack(cid, "INVALID_PARAMETERS")
         # idempotency (like the .ino's finite cache)
         if cid in self.seen_ids:
             return self._nack(cid, "DUPLICATE_COMMAND")
@@ -515,10 +522,12 @@ with open(_fw_path, encoding="utf-8") as fh:
     ino_full = fh.read()
 ino_code = re.sub(r"/\*.*?\*/", "", ino_full, flags=re.DOTALL)
 ino_code = re.sub(r"//[^\n]*", "", ino_code)
-check("firmware: zero business hardware (gpio/pwm/servo/motor/led/i2c/spi)",
+# P19: digitalWrite/pinMode on LED_PIN is the ONE sanctioned body
+# action; everything else stays forbidden
+check("firmware: zero business hardware beyond the sanctioned LED write",
       not re.search(r"gpio_set|ledcWrite|analogWrite|servo|Servo|motor|"
-                    r"relay|digitalWrite|camera|microphone|speaker",
-                    ino_code))
+                    r"relay|camera|microphone|speaker", ino_code)
+      and ino_code.count("digitalWrite") == 2)  # boot OFF + SET_LED action
 # AI concepts: provenance field NAMES (decision_id/strategy_id/...) are
 # PROTOCOL data (Phase-14 traceability), not AI logic — excluded
 ai_rx = re.compile(r"\bLLM\b|\bprompt\b|personality|\bmemory\b|"

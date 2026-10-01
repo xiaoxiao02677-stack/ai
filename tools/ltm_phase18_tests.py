@@ -341,7 +341,8 @@ check("observe_terminal rejects non-terminal statuses",
 check("advertisement still cannot touch server contracts",
       set(_DR.list_ids()) == {"capability.respond",
                               "capability.remind",
-                              "capability.acknowledge"})
+                              "capability.acknowledge",
+                              "capability.led"})
 
 
 
