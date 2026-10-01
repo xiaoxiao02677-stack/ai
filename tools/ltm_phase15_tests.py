@@ -71,7 +71,8 @@ for dom, files in (("experience", ("schemas.py", "repository.py", "engine.py")),
                    ("capability", ("schemas.py", "registry.py",
                                    "resolver.py")),
                    ("device_protocol", ("command.py", "protocol.py",
-                                        "transport.py"))):
+                                        "transport.py", "real_transport.py",
+                                        "ack.py", "__init__.py"))):
     for rel in files:
         shutil.copy(os.path.join(SRC_ABS, "open_llm_vtuber", dom, rel),
                     os.path.join(DOMAINS[dom], rel))
@@ -337,8 +338,12 @@ REAL_IO_RX = re.compile(
     r"socket\.|requests\.(get|post|put|delete)|\bhttpx\b|aiohttp|urllib"
     r"|websocket|mqtt|serial|bluetooth|\bble\b|gpio|esp32\.|idf\.py"
     r"|subprocess|os\.system|eval\(|exec\(")
+# Phase-15 boundary scope: the zero-I/O guarantee covered the Phase-15
+# package files; real_transport.py/ack.py are Phase-16 additions covered
+# by the phase-16 suite's own (socket-allowed-for-real_transport) scan
+P15_SCOPE = {"__init__.py", "command.py", "protocol.py", "transport.py"}
 for fn in sorted(os.listdir(DEV_DIR)):
-    if not fn.endswith(".py"):
+    if not fn.endswith(".py") or fn not in P15_SCOPE:
         continue
     hits = [ln.strip()[:70] for _, ln in _code_lines(os.path.join(DEV_DIR, fn))
             if REAL_IO_RX.search(ln)]

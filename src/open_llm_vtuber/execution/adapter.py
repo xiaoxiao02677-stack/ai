@@ -164,7 +164,8 @@ class ESP32Adapter(ExecutionAdapter):
         self.protocol = protocol if protocol is not None else DeviceProtocol()
 
     def run(self, request: ExecutionRequest) -> Dict[str, Any]:
-        from ..device_protocol import DeviceCommand, DeviceCommandError
+        from ..device_protocol import (DeviceCommand, DeviceCommandError,
+                                       DeviceAck, DeviceAckError)
         from ..device_protocol.transport import TransportTimeout, \
             TransportError
 
@@ -187,7 +188,7 @@ class ESP32Adapter(ExecutionAdapter):
                 "command_id": command.command_id,
             }
 
-        # 4. mock device response (transport accepted != device executed)
+        # 4. device response (transport accepted != device executed)
         try:
             response = self.transport.receive(command.command_id)
         except TransportTimeout:
@@ -198,10 +199,12 @@ class ESP32Adapter(ExecutionAdapter):
                 "command_id": command.command_id,
             }
 
-        # 5. decode + validate the response envelope (same protocol)
+        # 5. decode + validate the response as a formal DeviceAck (Phase 16
+        #    protocol); falls back to command-echo decode only for legacy
+        #    mock responses (Phase 15 test fixtures)
         try:
-            decoded = self.protocol.decode(response)
-        except DeviceCommandError as e:
+            ack = self._decode_response(response, command)
+        except (DeviceCommandError, DeviceAckError) as e:
             return {
                 "simulated": False,
                 "status": "DEVICE_FAILED",
@@ -209,13 +212,14 @@ class ESP32Adapter(ExecutionAdapter):
                 "command_id": command.command_id,
             }
 
-        # mock semantics: echo of the validated command == device executed
-        # (a REAL device will return its own result envelope — future phase)
-        if decoded.command_id != command.command_id:
+        # 6. outcome: NACK carries the machine error_code; ACK requires
+        #    command_id match (an ack for a different command is a failure)
+        if not ack.is_success:
             return {
                 "simulated": False,
                 "status": "DEVICE_FAILED",
-                "reason": "response command_id mismatch",
+                "reason": f"device NACK ({ack.error_code})",
+                "error_code": ack.error_code,
                 "command_id": command.command_id,
             }
         return {
@@ -223,7 +227,33 @@ class ESP32Adapter(ExecutionAdapter):
             "status": "DEVICE_RESULT",
             "command_id": command.command_id,
             "device_id": self.device_id,
-            "operation": decoded.operation,
+            "operation": command.operation,
             "transport_accepted": True,
             "device_ack": True,
         }
+
+    def _decode_response(self, response: str,
+                         command: "DeviceCommand"):
+        """Decode a device response into a DeviceAck.
+
+        Formal path: an ACK envelope ({message_type: 'ack', ...}).
+        Legacy path (Phase 15 mock fixtures only): a command echo —
+        interpreted as device_ack=True with the echoed command_id.
+        """
+        import json
+        from ..device_protocol import DeviceAck, DeviceAckError
+        try:
+            data = json.loads(response)
+        except (json.JSONDecodeError, TypeError) as e:
+            raise DeviceAckError(f"malformed response: {e}") from e
+        if not isinstance(data, dict):
+            raise DeviceAckError("response must be a JSON object")
+        if data.get("message_type") == "ack":
+            return DeviceAck.from_dict(data)
+        # legacy echo: validate it as a full command and map to an ack
+        from ..device_protocol import DeviceCommand
+        echoed = DeviceCommand.from_dict(data.get("cmd", data))
+        if echoed.command_id != command.command_id:
+            raise DeviceAckError("response command_id mismatch")
+        return DeviceAck(command_id=echoed.command_id,
+                         device_id=echoed.device_id, status="ACK")

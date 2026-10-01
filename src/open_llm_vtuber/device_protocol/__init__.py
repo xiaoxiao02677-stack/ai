@@ -27,6 +27,8 @@ from .command import (DeviceCommand, DeviceCommandError,
 from .protocol import DeviceProtocol
 from .transport import Transport, MockTransport, TransportTimeout, \
     TransportError
+from .real_transport import RealTCPTransport
+from .ack import DeviceAck, DeviceAckError, ACK_STATUS, ACK_ERROR_CODES
 
 __all__ = [
     "DeviceCommand",
@@ -39,4 +41,6 @@ __all__ = [
     "MockTransport",
     "TransportTimeout",
     "TransportError",
+    "RealTCPTransport",
+    "DeviceAck", "DeviceAckError", "ACK_STATUS", "ACK_ERROR_CODES",
 ]
