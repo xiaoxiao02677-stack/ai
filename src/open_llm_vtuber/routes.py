@@ -108,11 +108,25 @@ def init_webtool_routes(default_context_cache: ServiceContext) -> APIRouter:
         for entry in os.scandir(live2d_dir):
             if entry.is_dir():
                 folder_name = entry.name.replace("\\", "/")
-                model3_file = os.path.join(
-                    live2d_dir, folder_name, f"{folder_name}.model3.json"
-                ).replace("\\", "/")
+                # support both the flat layout ({dir}/{dir}.model3.json)
+                # and the Cubism-runtime layout ({dir}/runtime/{dir}.model3.
+                # json) — model_dict.json already points at the runtime one
+                candidates = [
+                    os.path.join(
+                        live2d_dir, folder_name, f"{folder_name}.model3.json"
+                    ),
+                    os.path.join(
+                        live2d_dir, folder_name, "runtime",
+                        f"{folder_name}.model3.json",
+                    ),
+                ]
+                model3_file = None
+                for cand in candidates:
+                    if os.path.isfile(cand):
+                        model3_file = cand.replace("\\", "/")
+                        break
 
-                if os.path.isfile(model3_file):
+                if model3_file is not None:
                     # Find avatar file if it exists
                     avatar_file = None
                     for ext in supported_extensions:
