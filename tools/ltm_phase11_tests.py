@@ -32,7 +32,7 @@ LTM_PKG = os.path.join(PKG, "long_term_memory")
 os.makedirs(os.path.join(LTM_PKG, "storage"))
 DOMAINS = {}
 for name in ("experience", "reflection", "lesson", "strategy", "evaluation",
-             "decision", "action", "execution"):
+             "decision", "action", "execution", "capability"):
     d = os.path.join(PKG, name)
     os.makedirs(d)
     DOMAINS[name] = d
@@ -65,7 +65,9 @@ for dom, files in (("experience", ("schemas.py", "repository.py", "engine.py")),
                    ("action", ("schemas.py", "repository.py", "engine.py",
                                "analyzer.py")),
                    ("execution", ("schemas.py", "repository.py", "engine.py",
-                                  "sandbox.py"))):
+                                  "sandbox.py")),
+                   ("capability", ("schemas.py", "registry.py",
+                                   "resolver.py"))):
     for rel in files:
         shutil.copy(os.path.join(SRC_ABS, "open_llm_vtuber", dom, rel),
                     os.path.join(DOMAINS[dom], rel))
@@ -87,7 +89,8 @@ from pkg.execution.schemas import (ExecutionResult,  # noqa: E402
 from pkg.execution.repository import ExecutionRepository  # noqa: E402
 from pkg.execution.engine import ExecutionEngine  # noqa: E402
 from pkg.execution.sandbox import (SandboxExecutor,  # noqa: E402
-                                   _validate_parameters)
+                                   _validate_parameters_legacy
+                                   as _validate_parameters)
 
 ok = 0
 fail = 0
