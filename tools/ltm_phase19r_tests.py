@@ -55,12 +55,22 @@ def section(t):
 
 sys.path.insert(0, os.path.abspath(SRC))
 
-# import console pieces (codec is the unit under test here)
+# import the SERVICE (codec's single home since the workshop
+# extraction; the console is a thin CLI shell over it)
+SERVICE = os.path.join(os.path.abspath(SRC), "open_llm_vtuber",
+                       "device_protocol", "p19r_service.py")
 CONSOLE = os.path.join(HERE, "p19r_console.py")
 import importlib.util  # noqa: E402
-spec = importlib.util.spec_from_file_location("p19r_console", CONSOLE)
-console = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(console)
+spec = importlib.util.spec_from_file_location("p19r_service", SERVICE)
+svc = importlib.util.module_from_spec(spec)
+try:
+    spec.loader.exec_module(svc)
+except ImportError:
+    # server-style src. package layout: import normally
+    import importlib
+    svc = importlib.import_module(
+        "open_llm_vtuber.device_protocol.p19r_service")
+console = svc   # codec lives here now
 
 from open_llm_vtuber.device_protocol import (  # noqa: E402
     DeviceCommand, DeviceHello, DeviceSessionError, DeviceAck,
@@ -349,15 +359,15 @@ r = subprocess.run(
 out = r.stdout
 check("console E2E exits 0", r.returncode == 0,
       out[-300:] if r.returncode else "")
-check("console reports 27 passed / 0 failed",
-      "27 passed, 0 failed" in out)
+check("console reports 26 passed / 0 failed (thin shell)",
+      "26 passed, 0 failed" in out)
 check("device executed [on, off, late-on] — zero duplicates",
       sim.executed == [True, False, True], str(sim.executed))
 check("session gate + P17 semantics exercised in E2E",
-      "session ONLINE (P17 state machine)" in out
-      and "Device Gate: ONLINE + SET_LED advertised -> OK" in out)
-check("physical LED blocks marked BLOCKED under --yes",
-      "BLOCKED-from-console" in out)
+      "session ONLINE (P17)" in out
+      and "Device Gate: ONLINE + SET_LED -> OK" in out)
+check("physical LED marked not-confirmed under --yes",
+      "NOT confirmed" in out)
 check("kill switch checks present in E2E",
       "GLOBAL_EXECUTION_ENABLED = False" in out)
 

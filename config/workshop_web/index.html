@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>屿禾工坊 · 设备控制台</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="ws-header">
+  <div class="ws-brand">
+    <span class="ws-logo">🔧</span>
+    <div>
+      <h1>屿禾工坊</h1>
+      <p class="ws-sub">ESP32 / 小智 实体设备 · 管理与控制中心</p>
+    </div>
+  </div>
+  <nav class="ws-nav">
+    <a href="/" class="ws-nav-item">💬 聊天</a>
+    <a href="/memory/" class="ws-nav-item">🧠 记忆</a>
+    <a href="/config/" class="ws-nav-item">⚙️ 配置</a>
+    <a href="/web-tool/index.html" class="ws-nav-item">🎙️ Web工具</a>
+    <a href="/workshop/" class="ws-nav-item active">🔧 屿禾工坊</a>
+  </nav>
+</header>
+
+<main id="app" class="ws-main">
+  <!-- overview strip -->
+  <section class="ws-stats" id="stats">
+    <div class="stat"><span class="stat-num" id="st-total">–</span><span class="stat-label">设备总数</span></div>
+    <div class="stat ok"><span class="stat-num" id="st-online">–</span><span class="stat-label">在线</span></div>
+    <div class="stat warn"><span class="stat-num" id="st-stale">–</span><span class="stat-label">STALE</span></div>
+    <div class="stat off"><span class="stat-num" id="st-disc">–</span><span class="stat-label">离线</span></div>
+  </section>
+
+  <!-- connect bar -->
+  <section class="ws-panel">
+    <div class="ws-panel-head">
+      <h2>接入设备</h2>
+      <span class="ws-hint">设备固件需监听 TCP 3333 并发送 HELLO / ADVERTISEMENT</span>
+    </div>
+    <div class="ws-connect-row">
+      <input id="conn-host" class="ws-input mono" type="text" placeholder="设备 IP（如 192.168.2.7）">
+      <input id="conn-port" class="ws-input mono" type="number" value="3333" style="width:90px">
+      <button id="conn-btn" class="ws-btn">连接设备</button>
+      <span id="conn-status" class="ws-inline-status"></span>
+    </div>
+  </section>
+
+  <!-- device list -->
+  <section class="ws-panel">
+    <div class="ws-panel-head"><h2>我的设备</h2></div>
+    <div id="device-list" class="ws-device-list">
+      <div class="ws-empty">暂无在线设备 —— 连接设备或运行 P19-R 验收后显示</div>
+    </div>
+  </section>
+
+  <!-- recent commands -->
+  <section class="ws-panel">
+    <div class="ws-panel-head"><h2>最近命令</h2>
+      <button class="ws-btn ghost" id="cmd-refresh">刷新</button></div>
+    <div id="cmd-table" class="ws-cmd-table"></div>
+  </section>
+</main>
+
+<!-- device detail overlay -->
+<div id="detail-overlay" class="ws-overlay hidden">
+  <div class="ws-drawer" id="detail-body"></div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>

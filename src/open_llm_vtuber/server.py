@@ -36,6 +36,13 @@ except ImportError:  # memory panel is optional; server still runs without it
     memory_panel_router = None
     memory_api_alias = None
 
+# YH Workshop (config/workshop_panel.py) — 屿禾工坊 device console under
+# /workshop (API at /workshop/api, static at config/workshop_web/)
+try:
+    from config.workshop_panel import router as workshop_router
+except ImportError:  # workshop is optional; server still runs without it
+    workshop_router = None
+
 
 # Create a custom StaticFiles class that adds CORS headers
 class CORSStaticFiles(StarletteStaticFiles):
@@ -126,6 +133,10 @@ class WebSocketServer:
         if memory_api_alias is not None:
             self.app.include_router(memory_api_alias)
 
+        # YH Workshop: API routes under /workshop/api (before statics)
+        if workshop_router is not None:
+            self.app.include_router(workshop_router)
+
         # Initialize and include proxy routes if proxy is enabled
         system_config = config.system_config
         if hasattr(system_config, "enable_proxy") and system_config.enable_proxy:
@@ -184,6 +195,14 @@ class WebSocketServer:
                 "/memory",
                 CORSStaticFiles(directory="config/memory_web", html=True),
                 name="memory_panel",
+            )
+
+        # YH Workshop: static frontend under /workshop (before catch-all /)
+        if workshop_router is not None:
+            self.app.mount(
+                "/workshop",
+                CORSStaticFiles(directory="config/workshop_web", html=True),
+                name="workshop_panel",
             )
 
         # Mount main frontend last (as catch-all)

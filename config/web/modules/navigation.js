@@ -107,6 +107,12 @@ export const MODULE_SCHEMA = [
     desc: "对话记忆管理（独立面板）",
   },
   {
+    id: "workshop",
+    label: "屿禾工坊",
+    icon: "workshop",
+    desc: "ESP32 / 小智 实体设备控制中心（独立面板）",
+  },
+  {
     id: "tools",
     label: "工具",
     icon: "wrench",
@@ -134,6 +140,9 @@ export const ICONS = {
   home: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>',
   book: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>',
   wrench: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>',
+
+/* workshop icon (wrench+chip hybrid) */
+  workshop: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/><circle cx="5" cy="5" r="1"/><circle cx="9" cy="3" r="1"/>',
 };
 
 /* app.js 注入的状态访问与渲染回调（initNavigation 在 app.js 启动时调用一次） */
@@ -174,6 +183,10 @@ export function handleModuleNavigation(moduleId) {
     openMemoryWeb(); // 记忆是独立面板：新标签页打开，不切换当前视图
     return;
   }
+  if (moduleId === "workshop") {
+    openWorkshopWeb(); // 屿禾工坊是独立设备面板
+    return;
+  }
   deps.setModule(moduleId);
   deps.setSearchQuery("");
   deps.$("#search").value = "";
@@ -204,6 +217,11 @@ export function openConfigPage(pageId) {
 /* 打开独立记忆面板（server.py 将 config/memory_web 挂载在 /memory/） */
 export function openMemoryWeb() {
   window.open("/memory/", "_blank");
+}
+
+/* 打开屿禾工坊（server.py 将 config/workshop_web 挂载在 /workshop/） */
+export function openWorkshopWeb() {
+  window.open("/workshop/", "_blank");
 }
 
 /* 侧栏搜索在模块视图下不可用：提示用户先进入具体模块 */
