@@ -100,8 +100,7 @@ if DeviceGateway is not None:
         host="0.0.0.0", port=3333,
         on_device_attach=lambda hello, adv, ip, port, wire: _attach_device(
             hello, adv, ip, port, wire, origin="gateway-inbound"),
-        on_device_detach=_detach,
-        on_frame=lambda device_id, doc: refresh_device_activity(device_id))
+        on_device_detach=_detach)
     gateway.start()
 
 
@@ -324,12 +323,32 @@ def _run_led_full_chain(device_id: str, on: bool) -> Dict[str, Any]:
         except OSError:
             device_ack = None
         if device_ack is not None:
+            # REAL device ACK completes the lifecycle (observe_ack owns
+            # ack integrity; a NACK is recorded as the device verdict)
             observer.observe_ack(device_ack, now=time.time())
 
-    observer.observe_terminal(ui_command_id, terminal,
-                              error_code=None if terminal == "ACKED"
-                              else (result.reason or "")[:60],
-                              now=time.time())
+    # terminal for the non-acked paths only: the gateway verdict maps to
+    # REJECTED/FAILED (observe_terminal accepts those; an ACKED record
+    # is already terminal and must never be overwritten)
+    if terminal == "REJECTED":
+        observer.observe_terminal(ui_command_id, "REJECTED",
+                                  error_code=(result.reason or "")[:60],
+                                  now=time.time())
+    elif terminal == "FAILED" and device_ack is None:
+        observer.observe_terminal(ui_command_id, "FAILED",
+                                  error_code=(result.reason or "")[:60],
+                                  now=time.time())
+    elif terminal == "ACKED" and device_ack is None:
+        # sandbox-simulated success with no real device link: keep the
+        # lifecycle honest — the gateway result was simulated, and the
+        # device never acked. Mark REJECTED-style? No: the gateway
+        # executed the PURE sandbox path legitimately. Record FAILED is
+        # wrong too. Leave the record at SENT with a note — the history
+        # table shows status SENT until a real device ack or a policy
+        # verdict lands.
+        observer.observe_terminal(ui_command_id, "REJECTED",
+                                  error_code="SANDBOX_ONLY_NO_DEVICE_ACK",
+                                  now=time.time())
 
     m = _meta_for(device_id)
     m.log("INFO",
@@ -464,11 +483,10 @@ def _recent_commands(device_id: str) -> List[Dict[str, Any]]:
             "status": rec.status,
             "created_at": rec.created_at,
             "sent_at": rec.sent_at,
-            "completed_at": rec.ack_at,   # CommandRecord 字段名为 ack_at
+            "completed_at": rec.ack_at,
             "error_code": rec.error_code,
             "late_ack": rec.late_ack,
-            "duration_ms": (int((rec.ack_at - rec.created_at)
-                                * 1000)
+            "duration_ms": (int((rec.ack_at - rec.created_at) * 1000)
                             if rec.ack_at and rec.created_at
                             else None),
         })
