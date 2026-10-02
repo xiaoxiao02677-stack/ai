@@ -122,15 +122,11 @@ class DeviceGateway(threading.Thread):
     runtime (workshop_panel wires it to _attach_device)."""
 
     def __init__(self, host: str = "0.0.0.0", port: int = 3333,
-                 on_device_attach=None, on_frame=None):
+                 on_device_attach=None):
         super().__init__(daemon=True, name="yhw-device-gateway")
         self.host = host
         self.port = port
         self.on_device_attach = on_device_attach
-        # on_frame(device_id, doc): called for EVERY device frame in
-        # phase 2 — used by the panel to refresh session liveness
-        # (heartbeats refresh last_seen; registration alone is not enough).
-        self.on_frame = on_frame
         self._srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self._srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.channels: Dict[str, GatewayChannel] = {}
@@ -246,11 +242,6 @@ class DeviceGateway(threading.Thread):
                     except json.JSONDecodeError:
                         continue
                     chan._feed_in(doc)
-                    if self.on_frame is not None and device_id is not None:
-                        try:
-                            self.on_frame(device_id, doc)
-                        except Exception:
-                            pass
         except OSError:
             pass
         finally:

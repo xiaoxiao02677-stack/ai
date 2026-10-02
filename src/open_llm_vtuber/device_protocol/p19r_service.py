@@ -141,11 +141,50 @@ class XiaozhiCodec:
         if t in ("ACK", "NACK") or doc.get("message_type") == "ack":
             status = t if t in ("ACK", "NACK") \
                 else doc.get("status", "")
+            # Xiaozhi firmware may send a placeholder error_code on ACK
+            # frames ("none"/""/null); the P15 closed schema forbids any
+            # error_code on ACK — normalize void placeholders to None so
+            # a REAL device's ACK parses (the semantic content is the
+            # ACK status itself). Real NACK keeps its error_code.
+            error_code = doc.get("error_code")
+            if status == "ACK" and error_code is not None:
+                ec = str(error_code).strip()
+                if ec.lower() in ("", "none", "null"):
+                    # void placeholder on a genuine ACK — drop it
+                    error_code = None
+                else:
+                    # Xiaozhi firmware expresses NACK semantics with
+                    # status=ACK + a real error_code (observed live).
+                    # The error_code is the semantic authority -> parse
+                    # as NACK. The P15 object stays strict (closed
+                    # schema unchanged); this is WIRE normalization in
+                    # the codec, exactly its purpose.
+                    status = "NACK"
+            # firmware error-code vocabulary -> P15 closed enum
+            _FIRMWARE_CODE_MAP = {
+                "WRONG_DEVICE": "UNKNOWN_DEVICE",
+                "UNKNOWN_COMMAND": "UNKNOWN_OPERATION",
+                "BAD_PARAMETERS": "INVALID_PARAMETERS",
+                "INVALID_PARAMS": "INVALID_PARAMETERS",
+                "BAD_VERSION": "UNSUPPORTED_VERSION",
+                "PARSE_ERROR": "MALFORMED_MESSAGE",
+            }
+            if isinstance(error_code, str):
+                error_code = _FIRMWARE_CODE_MAP.get(
+                    error_code.strip().upper(), error_code)
+                if error_code not in (
+                        "UNKNOWN_COMMAND", "DUPLICATE_COMMAND",
+                        "UNKNOWN_DEVICE", "UNKNOWN_OPERATION",
+                        "INVALID_PARAMETERS", "INVALID_SCHEMA",
+                        "UNSUPPORTED_VERSION", "MALFORMED_MESSAGE",
+                        "TIMEOUT"):
+                    # unmappable firmware code -> closed-enum fallback
+                    error_code = "INVALID_SCHEMA"
             return DeviceAck.from_dict({
                 "command_id": doc.get("command_id", ""),
                 "device_id": doc.get("device_id", ""),
                 "status": status,
-                "error_code": doc.get("error_code"),
+                "error_code": error_code,
                 "protocol_version": doc.get("protocol_version", 1),
                 "message_type": "ack",
                 "echo": doc.get("echo", {}),

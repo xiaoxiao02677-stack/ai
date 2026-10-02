@@ -90,7 +90,7 @@ if DeviceGateway is not None:
     gateway = DeviceGateway(
         host="0.0.0.0", port=3333,
         on_device_attach=lambda hello, adv, ip, port, wire: _attach_device(
-            hello, adv, ip, port, wire, origin="gateway-inbound"))
+            hello, adv, ip, port, wire))
     gateway.start()
 
 
@@ -117,7 +117,6 @@ class _DeviceMeta:
         self.source_port: Optional[int] = None
         self.connected_at: Optional[float] = None
         self.wire_session_id: Optional[str] = None
-        self.origin: str = "unknown"   # gateway-inbound | probe-outbound
         self.events: List[Dict[str, Any]] = []   # bounded event log
 
     def log(self, level: str, event: str, device_id: str = "") -> None:
@@ -144,8 +143,7 @@ def _meta_for(device_id: str) -> _DeviceMeta:
 
 def _attach_device(hello: DeviceHello, adv: Optional[CapabilityAdvertisement],
                    ip: Optional[str], port: Optional[int],
-                   wire_session_id: Optional[str] = None,
-                   origin: str = "probe-outbound") -> None:
+                   wire_session_id: Optional[str] = None) -> None:
     """Register/couple a live device into the workshop runtime."""
     registry.register_hello(hello, now=time.time())
     if adv is not None:
@@ -153,7 +151,6 @@ def _attach_device(hello: DeviceHello, adv: Optional[CapabilityAdvertisement],
     m = _meta_for(hello.device_id)
     if m.connected_at is None:
         m.connected_at = time.time()
-    m.origin = origin
     if ip:
         m.source_ip = ip
     if port:
@@ -261,30 +258,12 @@ def _run_led_full_chain(device_id: str, on: bool) -> Dict[str, Any]:
     intent.status = STATUS_PLANNED
     action_repo.save(intent)
 
-    # UI command lifecycle (P18 observer — REAL events only: the intent
-    # is created, then the gateway verdict becomes the terminal state)
-    ui_command_id = "ws-" + intent.action_id
-    observer.observe_command_created(ui_command_id, device_id, "SET_LED",
-                                     now=time.time())
-    observer.observe_command_sent(ui_command_id, now=time.time())
-
     # --- the ONE execution boundary ---
     gateway = ExecutionGateway(execution_repo, action_repo, decision_repo,
                                evaluation_repo)
     result = gateway.execute(intent.action_id, conf_uid)
     if result is None:
-        observer.observe_terminal(ui_command_id, "FAILED",
-                                  error_code="NO_RESULT",
-                                  now=time.time())
         raise HTTPException(500, "gateway returned no result")
-
-    # map the ExecutionResult status onto the P18 terminal states
-    terminal = {"simulated": "ACKED", "rejected": "REJECTED",
-                "failed": "FAILED"}.get(result.status, "FAILED")
-    observer.observe_terminal(ui_command_id, terminal,
-                              error_code=None if terminal == "ACKED"
-                              else (result.reason or "")[:60],
-                              now=time.time())
 
     m = _meta_for(device_id)
     m.log("INFO",
@@ -294,7 +273,6 @@ def _run_led_full_chain(device_id: str, on: bool) -> Dict[str, Any]:
         "status": result.status,
         "reason": result.reason,
         "action_id": intent.action_id,
-        "command_id": ui_command_id,
         "capability": "capability.led",
         "operation": "SET_LED",
         "policy_metadata": result.metadata or {},
@@ -381,8 +359,6 @@ def _device_summary(device_id: str) -> Dict[str, Any]:
         "port": m.source_port,
         "online": bool(hp.online) if hp else False,
         "display_name": f"小智 {d.get('device_type', '')}".strip(),
-        "origin": m.origin,
-        "is_real": m.origin == "gateway-inbound",
     }
 
 
@@ -556,21 +532,6 @@ async def device_logs(device_id: str, level: str = "all"):
     return {"logs": events[-100:]}
 
 
-class CommandRequest(BaseModel):
-    operation: str            # closed: only SET_LED today
-    parameters: Dict[str, Any] = {}
-
-    def validate_operation(self):
-        if self.operation != "SET_LED":
-            raise HTTPException(400, f"unsupported operation "
-                                     f"'{self.operation}' (allowed: "
-                                     f"SET_LED)")
-        on = self.parameters.get("on")
-        if not isinstance(on, bool) or set(self.parameters.keys()) != {"on"}:
-            raise HTTPException(400, "SET_LED parameters must be exactly "
-                                     "{\"on\": boolean}")
-
-
 @router.post("/devices/{device_id}/led")
 async def device_led(device_id: str, req: LedRequest):
     """Full-chain SET_LED. Reads kill switch through the policy — the
@@ -578,30 +539,6 @@ async def device_led(device_id: str, req: LedRequest):
     is OFF) is returned to the caller."""
     _require_device(device_id)
     return _run_led_full_chain(device_id, req.on)
-
-
-@router.post("/devices/{device_id}/commands")
-async def device_command(device_id: str, req: CommandRequest):
-    """Spec-shaped command API: {operation, parameters} — routes to the
-    SAME full chain as /led (closed operation whitelist; no arbitrary
-    commands, no bypass of Policy/Gateway)."""
-    req.validate_operation()
-    _require_device(device_id)
-    return _run_led_full_chain(device_id, bool(req.parameters["on"]))
-
-
-@router.get("/events")
-async def global_events():
-    """Read-only aggregated event stream (all devices, poll-based).
-    Observation only — never an execution path."""
-    registry.check_stale(now=time.time())
-    out = []
-    for did in registry._sessions.keys():
-        m = _meta_for(did)
-        for e in m.events[-30:]:
-            out.append({"device_id": did, **e})
-    out.sort(key=lambda e: e.get("ts", ""), reverse=True)
-    return {"events": out[:120]}
 
 
 @router.post("/devices/{device_id}/diagnostics")

@@ -80,9 +80,12 @@ function renderDevices(devices) {
     const dot = STATE_DOT[st] || "off";
     const ops = (d.capabilities || []).map((o) => `<span class="chip">${esc(o)}</span>`).join("");
     const lastSeen = d.last_seen ? new Date(d.last_seen * 1000).toLocaleTimeString() : "—";
+    const originBadge = d.origin === "gateway-inbound"
+      ? '<span class="chip" style="color:var(--green);border-color:var(--green)">REAL</span>'
+      : '<span class="chip" style="color:var(--yellow);border-color:var(--yellow)">${d.origin === "probe-outbound" ? "PROBE" : "?"}</span>';
     return `
     <div class="ws-card">
-      <div class="d-name"><span class="dot ${dot}"></span>${esc(d.display_name || d.device_id)}</div>
+      <div class="d-name"><span class="dot ${dot}"></span>${esc(d.display_name || d.device_id)} ${originBadge}</div>
       <div class="d-row">${esc(d.device_id)}</div>
       <div class="d-row">${STATE_ZH[st] || st} · ${esc(d.firmware_version || "—")} · v${esc(d.protocol_version ?? "?")}</div>
       <div class="d-row">Session: ${esc((d.session_id || "").slice(0, 16))}</div>
@@ -265,10 +268,11 @@ async function runLed(deviceId, on) {
     line("info", `操作: ${r.operation} → capability: ${r.capability}`);
     line("info", `原因: ${r.reason}`);
     if (r.status === "simulated") {
-      line("ok", `✓ LED 已${on ? "开启" : "熄灭"}（ActionID: ${r.action_id}）`);
+      line("ok", `✓ LED 已${on ? "开启" : "熄灭"}（CommandID: ${r.command_id}）`);
     } else if (r.status === "rejected") {
-      line("bad", `✕ 被拒绝（Policy/Gateway 拦截——Kill Switch 生效时属预期）`);
+      line("bad", `✕ 被拒绝（Policy/Kill Switch 拦截——真实设备动作仅经 P19-R 验收链）`);
     }
+    line("info", `命令生命周期: CREATED → SENT → ${r.status === "simulated" ? "ACKED" : "REJECTED"}（见命令历史表）`);
   } catch (e) {
     st.className = "ws-inline-status err"; st.textContent = "失败";
     line("bad", `✕ 操作失败: ${e.message}`);
