@@ -100,7 +100,8 @@ if DeviceGateway is not None:
         host="0.0.0.0", port=3333,
         on_device_attach=lambda hello, adv, ip, port, wire: _attach_device(
             hello, adv, ip, port, wire, origin="gateway-inbound"),
-        on_device_detach=_detach)
+        on_device_detach=_detach,
+        on_frame=lambda device_id, doc: refresh_device_activity(device_id))
     gateway.start()
 
 
@@ -463,12 +464,12 @@ def _recent_commands(device_id: str) -> List[Dict[str, Any]]:
             "status": rec.status,
             "created_at": rec.created_at,
             "sent_at": rec.sent_at,
-            "completed_at": rec.completed_at,
+            "completed_at": rec.ack_at,   # CommandRecord 字段名为 ack_at
             "error_code": rec.error_code,
             "late_ack": rec.late_ack,
-            "duration_ms": (int((rec.completed_at - rec.created_at)
+            "duration_ms": (int((rec.ack_at - rec.created_at)
                                 * 1000)
-                            if rec.completed_at and rec.created_at
+                            if rec.ack_at and rec.created_at
                             else None),
         })
     return out[-50:]
