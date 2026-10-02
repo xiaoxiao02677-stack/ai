@@ -90,6 +90,8 @@ function renderDevices(devices) {
       <div class="d-row">${STATE_ZH[st] || st} · ${esc(d.firmware_version || "—")} · v${esc(d.protocol_version ?? "?")}</div>
       <div class="d-row">Session: ${esc((d.session_id || "").slice(0, 16))}</div>
       <div class="d-row">IP: ${esc(d.ip || "未连接")} · Last seen: ${esc(lastSeen)}</div>
+      <div class="d-row">心跳: ${d.heartbeat_age != null ? esc(d.heartbeat_age) + "s" : "—"} · 健康: ${esc(d.health_code || "—")} · ${d.readiness && d.readiness.ready ? "就绪" : "未就绪(" + esc(d.readiness ? d.readiness.gate_code : "") + ")"}</div>
+      <div class="d-row">能力数: ${esc(d.capability_count ?? 0)}${d.last_command ? " · 最近命令: " + esc(d.last_command.operation) + " " + esc(d.last_command.status) : ""}</div>
       <div class="d-ops">${ops || '<span class="ws-hint">无声明能力</span>'}</div>
       <div class="d-actions">
         <button class="ws-btn" data-action="detail" data-id="${esc(d.device_id)}">设备详情</button>
@@ -273,6 +275,15 @@ async function runLed(deviceId, on) {
       line("bad", `✕ 被拒绝（Policy/Kill Switch 拦截——真实设备动作仅经 P19-R 验收链）`);
     }
     line("info", `命令生命周期: CREATED → SENT → ${r.status === "simulated" ? "ACKED" : "REJECTED"}（见命令历史表）`);
+    if (r.device_ack) {
+      if (r.device_ack.status === "ACK") {
+        line("ok", `设备侧: ACKED（真实 ${r.command_id.slice(0, 12)}… 已确认）`);
+      } else {
+        line("bad", `设备侧: NACK ${r.device_ack.error_code || ""}`);
+      }
+    } else {
+      line("info", "设备侧: 无通道（设备未连入网关）");
+    }
   } catch (e) {
     st.className = "ws-inline-status err"; st.textContent = "失败";
     line("bad", `✕ 操作失败: ${e.message}`);

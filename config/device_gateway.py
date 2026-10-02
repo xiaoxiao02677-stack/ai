@@ -122,15 +122,12 @@ class DeviceGateway(threading.Thread):
     runtime (workshop_panel wires it to _attach_device)."""
 
     def __init__(self, host: str = "0.0.0.0", port: int = 3333,
-                 on_device_attach=None, on_frame=None):
+                 on_device_attach=None, on_device_detach=None):
         super().__init__(daemon=True, name="yhw-device-gateway")
         self.host = host
         self.port = port
         self.on_device_attach = on_device_attach
-        # on_frame(device_id, doc): called for EVERY device frame in
-        # phase 2 — used by the panel to refresh session liveness
-        # (heartbeats refresh last_seen; registration alone is not enough).
-        self.on_frame = on_frame
+        self.on_device_detach = on_device_detach   # (device_id) -> None
         self._srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self._srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.channels: Dict[str, GatewayChannel] = {}
@@ -178,8 +175,7 @@ class DeviceGateway(threading.Thread):
         buf = b""
         try:
             # phase 1: read HELLO + ADVERTISEMENT (register the device)
-            _adv_seen = False
-            while device_id is None or not _adv_seen:
+            while device_id is None:
                 try:
                     chunk = sock.recv(4096)
                 except socket.timeout:
@@ -203,15 +199,14 @@ class DeviceGateway(threading.Thread):
                                 XiaozhiCodec.parse_hello(doc)
                         except DeviceSessionError:
                             continue
-                        if device_id is None:
-                            device_id = hello.device_id
-                            adv = None
-                            with self._lock:
-                                self.channels[device_id] = chan
-                                self.conns[device_id] = sock
-                            # register once we have the advertisement too
-                            _pending_hello = hello
-                            _pending_wire = wire_sess
+                        device_id = hello.device_id
+                        adv = None
+                        with self._lock:
+                            self.channels[device_id] = chan
+                            self.conns[device_id] = sock
+                        # register once we have the advertisement too
+                        _pending_hello = hello
+                        _pending_wire = wire_sess
                     elif (device_id is not None
                           and (doc.get("type") == "ADVERTISEMENT"
                                or doc.get("message_type")
@@ -225,7 +220,6 @@ class DeviceGateway(threading.Thread):
                             self.on_device_attach(
                                 _pending_hello, adv, addr[0], addr[1],
                                 _pending_wire)
-                        _adv_seen = True
                         break
             # phase 2: pass frames into the channel (heartbeats refresh)
             while True:
@@ -246,11 +240,6 @@ class DeviceGateway(threading.Thread):
                     except json.JSONDecodeError:
                         continue
                     chan._feed_in(doc)
-                    if self.on_frame is not None and device_id is not None:
-                        try:
-                            self.on_frame(device_id, doc)
-                        except Exception:
-                            pass
         except OSError:
             pass
         finally:
@@ -258,6 +247,11 @@ class DeviceGateway(threading.Thread):
                 if device_id is not None:
                     self.channels.pop(device_id, None)
                     self.conns.pop(device_id, None)
+            if device_id is not None and self.on_device_detach is not None:
+                try:
+                    self.on_device_detach(device_id)
+                except Exception:
+                    pass
             chan.close()
             try:
                 sock.close()

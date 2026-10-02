@@ -87,10 +87,20 @@ observer = DeviceObserver(registry)
 # the server. Started once at import; devices attach via _attach_device.
 gateway = None
 if DeviceGateway is not None:
+    def _detach(device_id: str) -> None:
+        """Gateway link loss -> session state follows (no fake ONLINE)."""
+        try:
+            registry.disconnect(device_id)
+            _meta_for(device_id).log("WARN", "device offline (link lost)",
+                                     device_id)
+        except Exception:
+            pass
+
     gateway = DeviceGateway(
         host="0.0.0.0", port=3333,
         on_device_attach=lambda hello, adv, ip, port, wire: _attach_device(
-            hello, adv, ip, port, wire, origin="gateway-inbound"))
+            hello, adv, ip, port, wire, origin="gateway-inbound"),
+        on_device_detach=_detach)
     gateway.start()
 
 
@@ -269,9 +279,9 @@ def _run_led_full_chain(device_id: str, on: bool) -> Dict[str, Any]:
     observer.observe_command_sent(ui_command_id, now=time.time())
 
     # --- the ONE execution boundary ---
-    gateway = ExecutionGateway(execution_repo, action_repo, decision_repo,
-                               evaluation_repo)
-    result = gateway.execute(intent.action_id, conf_uid)
+    gw = ExecutionGateway(execution_repo, action_repo, decision_repo,
+                          evaluation_repo)
+    result = gw.execute(intent.action_id, conf_uid)
     if result is None:
         observer.observe_terminal(ui_command_id, "FAILED",
                                   error_code="NO_RESULT",
@@ -281,6 +291,40 @@ def _run_led_full_chain(device_id: str, on: bool) -> Dict[str, Any]:
     # map the ExecutionResult status onto the P18 terminal states
     terminal = {"simulated": "ACKED", "rejected": "REJECTED",
                 "failed": "FAILED"}.get(result.status, "FAILED")
+
+    # P19-R sanctioned real-device verification path: when the device is
+    # attached through the inbound gateway channel, the DeviceCommand is
+    # ALSO sent to the REAL device and the REAL ACK is folded into the
+    # lifecycle (identical semantics to the acceptance run). This is the
+    # only sanctioned real-device path (workshop LED button == P19-R LED
+    # step); the ExecutionGateway verdict above still stands and is
+    # reported verbatim — never masked.
+    device_ack = None
+    chan = gateway.get_channel(device_id) if gateway is not None else None
+    if chan is not None:
+        try:
+            from open_llm_vtuber.device_protocol.command import (
+                DeviceCommand)
+        except ImportError:
+            from src.open_llm_vtuber.device_protocol.command import (
+                DeviceCommand)
+        cmd = DeviceCommand(
+            command_id=ui_command_id, device_id=device_id,
+            capability="capability.led", operation="SET_LED",
+            parameters={"on": on}, protocol_version=1,
+            provenance={"action_id": intent.action_id,
+                        "decision_id": intent.decision_id,
+                        "evaluation_id": intent.evaluation_id,
+                        "strategy_id": intent.strategy_id},
+            created_at=time.time())
+        try:
+            chan.send(XiaozhiCodec.encode_command(cmd))
+            device_ack = chan.wait_ack(6.0)
+        except OSError:
+            device_ack = None
+        if device_ack is not None:
+            observer.observe_ack(device_ack, now=time.time())
+
     observer.observe_terminal(ui_command_id, terminal,
                               error_code=None if terminal == "ACKED"
                               else (result.reason or "")[:60],
@@ -288,7 +332,9 @@ def _run_led_full_chain(device_id: str, on: bool) -> Dict[str, Any]:
 
     m = _meta_for(device_id)
     m.log("INFO",
-          f"command SET_LED on={int(on)} -> {result.status}",
+          f"command SET_LED on={int(on)} -> gateway={result.status}"
+          + (f", device={'ACKED' if device_ack.is_success else 'NACK ' + str(device_ack.error_code)}"
+             if device_ack is not None else ", device=no-channel"),
           device_id)
     return {
         "status": result.status,
@@ -298,6 +344,10 @@ def _run_led_full_chain(device_id: str, on: bool) -> Dict[str, Any]:
         "capability": "capability.led",
         "operation": "SET_LED",
         "policy_metadata": result.metadata or {},
+        "device_ack": (None if device_ack is None else {
+            "status": device_ack.status,
+            "error_code": device_ack.error_code,
+        }),
     }
 
 
@@ -375,6 +425,10 @@ def _device_summary(device_id: str) -> Dict[str, Any]:
     m = _meta_for(device_id)
     d = _state_dict(device_id)
     hp = observer.get_device_health(device_id)[0]
+    ready, gate_code = observer.device_ready(device_id, "SET_LED",
+                                             now=time.time())
+    last_cmds = _recent_commands(device_id)
+    last = last_cmds[-1] if last_cmds else None
     return {
         **d,
         "ip": m.source_ip or "未连接",
@@ -383,6 +437,16 @@ def _device_summary(device_id: str) -> Dict[str, Any]:
         "display_name": f"小智 {d.get('device_type', '')}".strip(),
         "origin": m.origin,
         "is_real": m.origin == "gateway-inbound",
+        "heartbeat_age": (round(hp.heartbeat_age, 1)
+                          if hp else None),
+        "health_code": hp.health_state if hp else "UNKNOWN",
+        "readiness": {"ready": ready, "gate_code": gate_code},
+        "capability_count": len(d.get("capabilities", [])),
+        "last_command": (None if last is None else {
+            "command_id": last["command_id"],
+            "operation": last["operation"],
+            "status": last["status"],
+        }),
     }
 
 
