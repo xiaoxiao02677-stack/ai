@@ -38,7 +38,7 @@ from .adapter import (AdapterRegistry, DEFAULT_ADAPTER_REGISTRY,
                       ExecutionRequest)
 from .policy import (ExecutionPolicy, PolicyDecision, POLICY_SANDBOX)
 from .repository import ExecutionRepository
-from .schemas import ExecutionResult, STATUS_SIMULATED, STATUS_REJECTED
+from .schemas import ExecutionResult, STATUS_SIMULATED, STATUS_REJECTED, STATUS_EXECUTED
 
 
 class ExecutionGateway:
@@ -103,9 +103,14 @@ class ExecutionGateway:
                 intent, conf_uid,
                 f"contract input validation failed: {schema_error}")
 
-        # 5. authorization (default deny; kill switch)
-        decision = self.policy.decide(contract, adapter)
-        if decision.status != POLICY_SANDBOX:
+        # 5. authorization (default deny; kill switch). P20: non-PURE
+        # adapters ask the conf-aware p20 path (grant table + switches);
+        # PURE keeps the sandbox decision. Both default deny.
+        if adapter.side_effect_level == "PURE":
+            decision = self.policy.decide(contract, adapter)
+        else:
+            decision = self.policy.decide_p20(contract, adapter, conf_uid)
+        if decision.status not in (POLICY_SANDBOX, "REAL_ALLOWED"):
             return self._rejected(
                 intent, conf_uid,
                 f"execution policy denied: {decision.reason}")
@@ -122,12 +127,34 @@ class ExecutionGateway:
                                 f"adapter exception: {e}")
 
         # 7. result assembly + persistence
-        if not payload.get("simulated") is True:
-            # a PURE adapter must declare simulated=true; anything else is
-            # treated as an internal failure (never trusted blind)
+        if payload.get("status") == "DEVICE_RESULT":
+            # P20 real-device path: the adapter talked to a REAL device
+            # and holds a validated DeviceAck. Require the full evidence
+            # set before accepting EXECUTED (never trusted blind).
+            if not (payload.get("device_ack") is True
+                    and payload.get("command_id")
+                    and payload.get("device_id")):
+                return self._failed(
+                    intent, conf_uid, adapter,
+                    "device payload missing ack evidence")
+            rec = ExecutionResult.new(conf_uid, intent.action_id,
+                                      STATUS_EXECUTED)
+        elif payload.get("simulated") is True:
+            rec = ExecutionResult.new(conf_uid, intent.action_id,
+                                      STATUS_SIMULATED)
+        elif payload.get("status") in ("DEVICE_FAILED", "DEVICE_TIMEOUT",
+                                       "DEVICE_GATE_REJECTED"):
+            # P20: the adapter reached the device boundary and the
+            # DEVICE answered negatively (NACK / timeout / gate). This
+            # is an honest FAILED outcome with the device evidence kept.
+            return self._failed(
+                intent, conf_uid, adapter,
+                f"device outcome: {payload.get('status')} "
+                f"({payload.get('reason') or payload.get('error_code')})")
+        else:
+            # anything else is an internal failure (never trusted blind)
             return self._failed(intent, conf_uid, adapter,
                                 "adapter payload missing simulated=true")
-        rec = ExecutionResult.new(conf_uid, intent.action_id, STATUS_SIMULATED)
         rec.decision_id = intent.decision_id
         rec.evaluation_id = intent.evaluation_id
         rec.strategy_id = intent.strategy_id

@@ -234,8 +234,10 @@ policy_code = re.sub(r'""".*?"""', "", policy_src, flags=re.DOTALL)
 policy_code = re.sub(r"#[^\n]*", "", policy_code)
 check("GLOBAL_EXECUTION_ENABLED = False",
       "GLOBAL_EXECUTION_ENABLED = False" in policy_code)
-check("no env/config override for the kill switch",
-      policy_code.count("GLOBAL_EXECUTION_ENABLED") == 2
+check("no env/config override for the kill switch (single definition, "
+      "reads only since P20)",
+      len(re.findall(r"^GLOBAL_EXECUTION_ENABLED\s*=", policy_code,
+                     re.MULTILINE)) == 1
       and "os.environ" not in policy_code and "def set_" not in policy_code)
 gateway_src = open(os.path.join(os.path.abspath(SRC), "open_llm_vtuber",
                                 "execution", "gateway.py"),

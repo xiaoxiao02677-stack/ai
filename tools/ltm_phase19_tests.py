@@ -299,8 +299,10 @@ policy_code = re.sub(r'""".*?"""', "", _const_src(),
 policy_code = re.sub(r"#[^\n]*", "", policy_code)
 check("no setter/config/env override for the kill switch (code-only)",
       "GLOBAL_EXECUTION_ENABLED" in policy_code
-      # exactly two occurrences: one definition + one read — never rebound
-      and policy_code.count("GLOBAL_EXECUTION_ENABLED") == 2
+      # never rebound: only ONE assignment (the definition); every
+      # other occurrence must be a read (P20 added decide_p20 reads)
+      and len(re.findall(r"^GLOBAL_EXECUTION_ENABLED\s*=", policy_code,
+                         re.MULTILINE)) == 1
       and "os.environ" not in policy_code
       and "def set_" not in policy_code)
 

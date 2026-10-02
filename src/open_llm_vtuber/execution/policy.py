@@ -30,6 +30,25 @@ from ..capability.schemas import CapabilityContract
 # registry — defense in depth.
 GLOBAL_EXECUTION_ENABLED = False
 
+# ---------------------------------------------------------------------------
+# P20 explicit permission source (the Phase-13 "no permission source"
+# gap closed MINIMALLY, exactly as the Phase-13 docstring anticipated):
+# - P20_GRANT_TABLE: conf_uid-level allowlist for REAL (non-PURE)
+#   adapters. Populated ONLY by explicit P20 test/operation code.
+# - P20_SWITCH_ON: the in-code switch the REAL path reads. It is NOT
+#   the GLOBAL_EXECUTION_ENABLED constant (that stays the documented
+#   kill switch) and it is NOT env/config-settable — flipping it
+#   requires editing this source (code change + review), same
+#   discipline as the global switch. Default OFF.
+P20_SWITCH_ON = False
+P20_GRANT_TABLE = set()
+
+
+def is_granted(conf_uid: str, adapter) -> bool:
+    """P20 permission source: REAL execution needs BOTH the conf_uid
+    grant AND the switch; anything else denies."""
+    return P20_SWITCH_ON and conf_uid in P20_GRANT_TABLE
+
 # side-effect levels (model expressiveness for future adapters; Phase 13
 # adapters declare one, the policy reads it — unknown level -> DENY)
 SIDE_EFFECT_LEVELS = ("PURE", "LOCAL", "EXTERNAL", "DEVICE", "IRREVERSIBLE")
@@ -83,17 +102,52 @@ class ExecutionPolicy:
                 adapter_id=adapter.adapter_id, side_effect_level=level)
 
         # ---- non-PURE levels: real side effects are requested ----
+        # P20 permission path: the explicit grant table + the P20
+        # in-code switch (both default OFF; see P20_GRANT_TABLE above).
+        # The GLOBAL kill switch stays the master breaker: OFF -> DENY
+        # regardless of grants.
         if not GLOBAL_EXECUTION_ENABLED:
             return PolicyDecision(
                 POLICY_DENY,
                 "GLOBAL EXECUTION KILL SWITCH is OFF — real execution "
                 "denied (sandbox simulation remains available)",
                 adapter_id=adapter.adapter_id, side_effect_level=level)
-        # Even with the switch on, Phase 13 has NO permission source:
-        # default deny. (A future phase may add an explicit grant table;
-        # until then REAL_ALLOWED is unreachable.)
         return PolicyDecision(
             POLICY_DENY,
-            "no explicit permission source exists for real execution "
-            "(default deny)",
+            "real execution requires the P20 grant table + switch "
+            "(default deny; GLOBAL_EXECUTION_ENABLED is not a grant)",
             adapter_id=adapter.adapter_id, side_effect_level=level)
+
+    def decide_p20(self, contract, adapter, conf_uid: str) \
+            -> PolicyDecision:
+        """P20 REAL path: GLOBAL switch -> P20 grant table -> switch.
+
+        REAL_ALLOWED is reachable ONLY here, and only when ALL of:
+        GLOBAL_EXECUTION_ENABLED is True (the master kill switch, a
+        code-level constant), conf_uid is in P20_GRANT_TABLE, and
+        P20_SWITCH_ON is True (also a code-level constant, default
+        OFF). Every other combination denies."""
+        base = self.decide(contract, adapter)
+        if base.status == POLICY_SANDBOX:
+            return base
+        if not GLOBAL_EXECUTION_ENABLED or not P20_SWITCH_ON:
+            return PolicyDecision(
+                POLICY_DENY,
+                "P20 real execution denied (kill switch or p20 switch "
+                "OFF)",
+                adapter_id=getattr(adapter, "adapter_id", ""),
+                side_effect_level=str(getattr(adapter,
+                                              "side_effect_level", "")))
+        if conf_uid not in P20_GRANT_TABLE:
+            return PolicyDecision(
+                POLICY_DENY,
+                f"conf_uid '{conf_uid}' not in the P20 grant table",
+                adapter_id=getattr(adapter, "adapter_id", ""),
+                side_effect_level=str(getattr(adapter,
+                                              "side_effect_level", "")))
+        return PolicyDecision(
+            POLICY_REAL_ALLOWED,
+            "P20 grant table + switches ON — real execution allowed",
+            adapter_id=getattr(adapter, "adapter_id", ""),
+            side_effect_level=str(getattr(adapter,
+                                          "side_effect_level", "")))
