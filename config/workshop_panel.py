@@ -100,9 +100,31 @@ if DeviceGateway is not None:
         host="0.0.0.0", port=3333,
         on_device_attach=lambda hello, adv, ip, port, wire: _attach_device(
             hello, adv, ip, port, wire, origin="gateway-inbound"),
-        on_device_detach=_detach,
-        on_frame=lambda device_id, doc: refresh_device_activity(device_id))
+        on_device_detach=_detach)
     gateway.start()
+
+
+# P23 body-expression gateway (process-level; MOCK LCD until real
+# hardware is present — REAL LCD E2E stays BLOCKED and is never faked)
+try:
+    from config.expression_runtime import expression_gateway
+except ImportError:
+    try:
+        from expression_runtime import expression_gateway  # type: ignore
+    except ImportError:
+        # file-based fallback: config/expression_runtime.py sits next
+        # to this panel in the config/ package
+        import importlib.util as _iu
+        import os as _os
+        _p = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)),
+                           "expression_runtime.py")
+        if _os.path.isfile(_p):
+            _s = _iu.spec_from_file_location("expression_runtime", _p)
+            _m = _iu.module_from_spec(_s)
+            _s.loader.exec_module(_m)
+            expression_gateway = _m.expression_gateway
+        else:
+            expression_gateway = None  # type: ignore
 
 
 def refresh_device_activity(device_id: str) -> None:
@@ -526,6 +548,16 @@ async def overview():
             and gateway.started_at is not None,
             "host": "0.0.0.0", "port": 3333,
         } if gateway is not None else {"listening": False},
+        "expression": (None if expression_gateway is None else {
+            "current": expression_gateway.current,
+            "last_result_status": (expression_gateway.last_result or {})
+            .get("status"),
+            "updated_at": expression_gateway.updated_at,
+            "adapter": "mock" if (
+                expression_gateway.adapter is not None
+                and getattr(expression_gateway.adapter, "mock", False))
+            else "channel",
+        }),
     }
 
 

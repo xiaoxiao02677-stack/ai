@@ -28,8 +28,11 @@ from typing import Any, Dict, Optional
 PROTOCOL_VERSION = 1
 
 # controlled operation enum — Phase 19 adds SET_LED (the first body
-# operation; parameters stay closed: {'on': bool} only)
-DEVICE_OPERATIONS = ("TEST_ECHO", "SET_LED")
+# operation; parameters stay closed: {'on': bool} only). Phase 23 adds
+# SET_LCD_STATE (body expression, params {'state': str}); devices that
+# never advertise it keep refusing it via the P17 device gate —
+# backward compatible.
+DEVICE_OPERATIONS = ("TEST_ECHO", "SET_LED", "SET_LCD_STATE")
 
 _MAX_PARAM_VALUE_LEN = 200
 _MAX_PARAMS = 5
