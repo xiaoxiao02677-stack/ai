@@ -147,10 +147,18 @@ class ExecutionGateway:
             # P20: the adapter reached the device boundary and the
             # DEVICE answered negatively (NACK / timeout / gate). This
             # is an honest FAILED outcome with the device evidence kept.
-            return self._failed(
+            rec = self._failed(
                 intent, conf_uid, adapter,
                 f"device outcome: {payload.get('status')} "
                 f"({payload.get('reason') or payload.get('error_code')})")
+            # preserve the device evidence on the stored result so
+            # downstream observers (P22) can classify honestly
+            rec.result = dict(payload)
+            try:
+                self.execution_repo.save(rec)
+            except Exception:
+                pass
+            return rec
         else:
             # anything else is an internal failure (never trusted blind)
             return self._failed(intent, conf_uid, adapter,

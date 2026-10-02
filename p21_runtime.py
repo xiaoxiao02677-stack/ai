@@ -82,6 +82,8 @@ except ImportError:
 # analyzers see — no hidden if/led shortcut anywhere.
 _POSITIVE_MARKERS = ("终于", "做完", "完成", "搞定", "达成", "毕业",
                      "上线", "通过", "成功")
+# P22 explicit light-command vocabulary (user asks to control the LED)
+_LIGHT_ON_MARKERS = ("把灯打开", "开灯", "打开灯", "点亮灯", "灯打开")
 
 
 class P21RunResult(dict):
@@ -91,6 +93,11 @@ class P21RunResult(dict):
 def _is_positive_milestone(user_message: str) -> bool:
     text = user_message or ""
     return any(m in text for m in _POSITIVE_MARKERS)
+
+
+def _is_light_on_request(user_message: str) -> bool:
+    text = user_message or ""
+    return any(m in text for m in _LIGHT_ON_MARKERS)
 
 
 def handle_user_event(
@@ -145,7 +152,9 @@ def handle_user_event(
     # and still has to pass the REAL rule evaluation below.
     fixture_lesson_ids = [l.lesson_id for l in lessons] or ["p21-fixture"]
     fixture_strategy = StrategyRecord.new(conf_uid, fixture_lesson_ids)
-    fixture_strategy.condition = "用户 终于 做完 项目"
+    # bigram-friendly condition: every token here appears verbatim in
+    # the fixture scenarios' user messages (milestone + light-command)
+    fixture_strategy.condition = "用户 终于 做完 把灯 打开"
     fixture_strategy.recommendation = "点亮设备 LED 表示庆祝"
     fixture_strategy.evidence = list(fixture_lesson_ids)
     fixture_strategy.confidence = 0.8
@@ -174,15 +183,20 @@ def handle_user_event(
 
     # 6. Decision (P9) — deterministic fixture, clearly labeled
     positive = _is_positive_milestone(user_message)
+    light_request = _is_light_on_request(user_message)
+    wants_body = positive or light_request
     decision = DecisionRecord.new(conf_uid, DEC_ABSTAIN)
     decision.reason = ("P21 deterministic decision fixture: "
-                       + ("积极里程碑事件" if positive else "普通对话（无需身体动作）"))
+                       + ("积极里程碑事件" if positive else
+                          "开灯指令" if light_request else
+                          "普通对话（无需身体动作）"))
     decision.metadata = {"source": "deterministic_fixture",
-                         "p21_positive_milestone": positive}
+                         "p21_positive_milestone": positive,
+                         "p22_light_request": light_request}
 
     chosen_strategy = None
     chosen_evaluation = None
-    if positive and strategies:
+    if wants_body and strategies:
         # evaluate the strategy against the SAME user message context
         best = None
         for strategy in strategies:
@@ -268,4 +282,17 @@ def handle_user_event(
     result["device_ack"] = (exec_result.result.get("device_ack")
                             if isinstance(exec_result.result, dict)
                             else None)
+    # device-level verdict transparency: the gateway folds NACK/timeout
+    # into FAILED; preserve the device evidence in the run result so
+    # downstream observers (P22) can classify the outcome honestly
+    if (exec_result.status == "FAILED"
+            and isinstance(exec_result.result, dict)):
+        payload = exec_result.result
+        if payload.get("status") == "DEVICE_FAILED" and \
+                payload.get("error_code"):
+            result["device_ack"] = {"status": "NACK",
+                                    "error_code": payload["error_code"]}
+        elif payload.get("status") == "DEVICE_TIMEOUT":
+            result["device_ack"] = {"status": "TIMEOUT",
+                                    "error_code": "TIMEOUT"}
     return result
