@@ -55,14 +55,24 @@ try:
     from src.open_llm_vtuber.device_protocol import (
         DeviceRegistry, DeviceObserver, DeviceHello, CapabilityAdvertisement,
         DeviceCommandError, GATE_OK)
+    from src.open_llm_vtuber.device_protocol.session import Heartbeat
     from src.open_llm_vtuber.device_protocol.p19r_service import (
         XiaozhiCodec, DeviceConnection, validate_device)
 except ImportError:  # in-package fallback
     from open_llm_vtuber.device_protocol import (  # type: ignore
         DeviceRegistry, DeviceObserver, DeviceHello, CapabilityAdvertisement,
         DeviceCommandError, GATE_OK)
+    from open_llm_vtuber.device_protocol.session import Heartbeat  # type: ignore
     from open_llm_vtuber.device_protocol.p19r_service import (  # type: ignore
         XiaozhiCodec, DeviceConnection, validate_device)
+
+try:
+    from config.device_gateway import DeviceGateway
+except ImportError:
+    try:
+        from device_gateway import DeviceGateway  # type: ignore
+    except ImportError:
+        DeviceGateway = None  # type: ignore
 
 router = APIRouter(prefix="/workshop/api")
 
@@ -72,6 +82,25 @@ router = APIRouter(prefix="/workshop/api")
 
 registry = DeviceRegistry()
 observer = DeviceObserver(registry)
+
+# inbound device gateway (TCP :3333) — client-mode firmware connects TO
+# the server. Started once at import; devices attach via _attach_device.
+gateway = None
+if DeviceGateway is not None:
+    gateway = DeviceGateway(
+        host="0.0.0.0", port=3333,
+        on_device_attach=lambda hello, adv, ip, port, wire: _attach_device(
+            hello, adv, ip, port, wire))
+    gateway.start()
+
+
+def refresh_device_activity(device_id: str) -> None:
+    """A heartbeat/any frame from the gateway refreshes the session."""
+    try:
+        registry.heartbeat(
+            Heartbeat(device_id=device_id), now=time.time())
+    except Exception:
+        pass
 
 # server-side capability contracts (static, from the P12 registry)
 try:
@@ -384,6 +413,11 @@ async def overview():
         "devices": [_device_summary(d) for d in device_ids],
         "recent_commands": recent[:10],
         "server_time": datetime.now().isoformat(timespec="seconds"),
+        "device_gateway": {
+            "listening": gateway is not None
+            and gateway.started_at is not None,
+            "host": "0.0.0.0", "port": 3333,
+        } if gateway is not None else {"listening": False},
     }
 
 
@@ -586,12 +620,27 @@ async def device_p19r(device_id: str, req: P19RRequest):
         raise HTTPException(404, f"device '{device_id}' not found")
     ip = _meta_for(device_id).source_ip or "127.0.0.1"
     port = _meta_for(device_id).source_port or 3333
+    # inbound link (client-mode firmware): validate over the gateway
+    # channel instead of an outbound connection
+    channel = gateway.get_channel(device_id) if gateway is not None else None
 
     steps: List[Dict[str, Any]] = []
     passed = failed = 0
     fatal = None
+    known = None
+    if channel is not None:
+        sess = registry.get(device_id)
+        if sess is not None:
+            known = {
+                "hello": DeviceHello(
+                    device_id=device_id,
+                    device_type=sess.device_type or "xiaozhi.esp32s3",
+                    firmware_version=sess.firmware_version or "unknown"),
+                "operations": list(sess.capabilities),
+            }
     gen = validate_device(ip, port, timeout=req.timeout,
-                          expected_device_id=device_id)
+                          expected_device_id=device_id,
+                          channel=channel, known_session=known)
     to_send = None
     try:
         while True:

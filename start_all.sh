@@ -44,9 +44,11 @@ status_all() {
     "http://127.0.0.1:12395/config/|配置面板(内网)"
     "http://127.0.0.1:12395/memory/|记忆面板(内网)"
     "http://127.0.0.1:12395/web-tool/index.html|Web工具(内网)"
+    "http://127.0.0.1:12395/workshop/|屿禾工坊(内网)"
     "https://127.0.0.1:12393/|聊天前端(公网TLS)"
     "https://127.0.0.1:12393/config/|配置面板(公网TLS)"
     "https://127.0.0.1:12393/memory/|记忆面板(公网TLS)"
+    "https://127.0.0.1:12393/workshop/|屿禾工坊(公网TLS)"
   )
   for c in "${checks[@]}"; do
     local url="${c%%|*}" label="${c##*|}"
@@ -56,7 +58,7 @@ status_all() {
 }
 
 # ---- 1. backend ----
-echo "=== [1/2] 后端 (127.0.0.1:12395) ==="
+echo "=== [1/3] 后端 (127.0.0.1:12395) ==="
 if curl -s -m 2 -o /dev/null http://127.0.0.1:12395/; then
   ok "后端已在运行，跳过"
 else
@@ -67,7 +69,7 @@ else
 fi
 
 # ---- 2. tls proxy (public entry) ----
-echo "=== [2/2] TLS 公网入口 (:12393) ==="
+echo "=== [2/3] TLS 公网入口 (:12393) ==="
 if curl -sk -m 2 -o /dev/null https://127.0.0.1:12393/; then
   ok "TLS 代理已在运行，跳过"
 else
@@ -76,9 +78,34 @@ else
   wait_http "https://127.0.0.1:12393/" "TLS 入口" || { bad "查看日志: tail -20 /tmp/tls_proxy.log"; exit 1; }
 fi
 
+# ---- 3. device gateway (TCP 3333, inside backend process) ----
+echo "=== [3/3] 设备网关 (TCP :3333，随后端进程) ==="
+sleep 1
+if ss -tln 2>/dev/null | grep -q ":3333 "; then
+  ok "设备网关监听中 :3333（小智固件可直连服务器）"
+else
+  # backend may still be initializing the workshop panel; retry briefly
+  GwUp=0
+  for i in 1 2 3 4 5 6 7 8 9 10; do
+    sleep 2
+    if ss -tln 2>/dev/null | grep -q ":3333 "; then GwUp=1; break; fi
+  done
+  if [ "$GwUp" = "1" ]; then
+    ok "设备网关监听中 :3333（随 backend/workshop 面板启动）"
+  else
+    warn "设备网关 :3333 未监听（检查 workshop_panel 是否加载: curl /workshop/api/overview 的 device_gateway 字段）"
+  fi
+fi
+
 echo ""
 status_all
 echo ""
+echo "=== 端口监听总览 ==="
+ss -tln 2>/dev/null | grep -E ":(12393|12395|3333) " | awk '{print "  " $4}'
+echo ""
 IP=$(hostname -I 2>/dev/null | awk '{print $1}')
-echo "一键启动完成。公网访问入口:  https://<服务器IP>:12393/   (当前服务器内网IP: ${IP:-未知})"
-echo "聊天页设置中 WebSocket 地址请填:  ws://<服务器IP>:12393/client-ws"
+echo "一键启动完成。"
+echo "  公网访问入口:   https://${IP:-<服务器IP>}:12393/"
+echo "  屿禾工坊:       https://${IP:-<服务器IP>}:12393/workshop/"
+echo "  聊天页 WS 地址: ws://${IP:-<服务器IP>}:12393/client-ws"
+echo "  小智固件连接:   固件填服务器 IP + 端口 3333（TCP，固件作客户端主动连接）"

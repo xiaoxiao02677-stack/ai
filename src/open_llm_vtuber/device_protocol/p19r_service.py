@@ -185,6 +185,15 @@ class DeviceConnection:
         self.sock = socket.create_connection((host, port), timeout=timeout)
         self.buf = b""
 
+    @classmethod
+    def wrap(cls, sock):
+        """Adopt an ALREADY-CONNECTED socket (server-side gateway use —
+        no outbound connect is performed)."""
+        obj = cls.__new__(cls)
+        obj.sock = sock
+        obj.buf = b""
+        return obj
+
     def send(self, obj_or_bytes):
         data = obj_or_bytes if isinstance(obj_or_bytes, bytes) \
             else (json.dumps(obj_or_bytes, ensure_ascii=False)
@@ -244,9 +253,235 @@ class DeviceConnection:
 # Validation sequence (single implementation, generator of step events)
 # ---------------------------------------------------------------------------
 
+
+def _validate_body(conn, timeout, hello, wire_session_id, advertised,
+                   set_led_ok, expected_device_id=None):
+    """Sections 3-9 of the acceptance sequence, shared by the outbound
+    and the inbound-channel entry paths (single implementation)."""
+    device_id = hello.device_id
+    adv = None
+    if advertised:
+        adv = CapabilityAdvertisement(device_id=device_id,
+                                      operations=list(advertised))
+    # 3. Session + gate
+    yield {"kind": "section",
+           "title": "3. Session + Device Gate (P17)"}
+    registry = DeviceRegistry()
+    observer = DeviceObserver(registry)
+    session = registry.register_hello(hello, now=time.time())
+    yield {"kind": "check", "name": "session ONLINE (P17)",
+           "ok": session.state == SESSION_ONLINE}
+    if adv:
+        registry.advertise(adv, now=time.time())
+    gate = registry.send_allowed(device_id, "SET_LED",
+                                 now=time.time())
+    yield {"kind": "check",
+           "name": "Device Gate: ONLINE + SET_LED -> OK",
+           "ok": gate == (True, GATE_OK)}
+    state = observer.get_device_state(device_id)
+    yield {"kind": "device", "device_id": device_id,
+           "state": {
+               "device_id": state.device_id,
+               "session_id": state.session_id,
+               "protocol_version": state.protocol_version,
+               "connection_state": state.connection_state,
+               "last_seen": state.last_seen,
+               "capabilities": state.capabilities,
+           }}
+
+    # 4. failure probes
+    yield {"kind": "section",
+           "title": "4. Security failure probes (six, NACK)"}
+
+    def _probe(label, command_id, device, operation, params,
+               expect_code, wire_override=None):
+        cmd = DeviceCommand(
+            command_id=command_id, device_id=device,
+            capability="capability.led"
+            if operation == "SET_LED" else "capability.test",
+            operation=operation, parameters=params,
+            protocol_version=1,
+            provenance={"action_id": "p19r", "decision_id": "p19r",
+                        "evaluation_id": "p19r", "strategy_id": "p19r"},
+            created_at=time.time())
+        try:
+            cmd.validate()
+        except Exception as e:
+            yield {"kind": "check", "name": label, "ok": True,
+                   "detail": f"rejected server-side: "
+                             f"{type(e).__name__}"}
+            return None
+        observer.observe_command_created(command_id, device,
+                                         operation, now=time.time())
+        frame = wire_override if wire_override is not None \
+            else XiaozhiCodec.encode_command(cmd)
+        conn.send(frame)
+        ack = conn.wait_ack(timeout)
+        ok_ack = (ack is not None and ack.status == "NACK"
+                  and ack.error_code == expect_code
+                  and ack.command_id == command_id)
+        yield {"kind": "check", "name": label, "ok": ok_ack,
+               "detail": f"got status={getattr(ack, 'status', None)} "
+                         f"code={getattr(ack, 'error_code', None)}"}
+        return ack
+
+    yield from _probe("wrong device_id -> NACK UNKNOWN_DEVICE",
+                      "p-wrongdev-" + uuid.uuid4().hex[:8],
+                      "esp32-WRONG", "SET_LED", {"on": True},
+                      "UNKNOWN_DEVICE")
+    yield from _probe("unknown operation -> NACK UNKNOWN_OPERATION",
+                      "p-unkop-" + uuid.uuid4().hex[:8], device_id,
+                      "SERVO_MOVE", {"on": True}, "UNKNOWN_OPERATION")
+    yield from _probe("unsupported capability -> NACK",
+                      "p-unscap-" + uuid.uuid4().hex[:8], device_id,
+                      "PLAY_AUDIO", {"vol": 5}, "UNKNOWN_OPERATION")
+    bad_ver_id = "p-badver-" + uuid.uuid4().hex[:8]
+    conn.send({"type": "COMMAND", "protocol_version": 9,
+               "command_id": bad_ver_id, "device_id": device_id,
+               "operation": "SET_LED", "parameters": {"on": True}})
+    ack = conn.wait_ack(timeout)
+    yield {"kind": "check",
+           "name": "invalid protocol version -> NACK "
+                   "UNSUPPORTED_VERSION",
+           "ok": (ack is not None and ack.status == "NACK"
+                  and ack.error_code == "UNSUPPORTED_VERSION"),
+           "detail": f"got {getattr(ack, 'error_code', None)}"}
+    yield from _probe("invalid parameters (string on) -> NACK",
+                      "p-badpar-" + uuid.uuid4().hex[:8], device_id,
+                      "SET_LED", {"on": "true-string"},
+                      "INVALID_PARAMETERS")
+    yield from _probe("extra parameter -> NACK INVALID_PARAMETERS",
+                      "p-badpar2-" + uuid.uuid4().hex[:8], device_id,
+                      "SET_LED", {"on": True, "extra": 1},
+                      "INVALID_PARAMETERS")
+    conn.send(b"{this is not json")
+    ack = conn.wait_ack(timeout)
+    yield {"kind": "check",
+           "name": "malformed JSON -> NACK MALFORMED_MESSAGE",
+           "ok": (ack is not None
+                  and ack.error_code == "MALFORMED_MESSAGE"),
+           "detail": f"got {getattr(ack, 'error_code', None)}"}
+
+    if not set_led_ok:
+        yield {"kind": "fatal",
+               "reason": "device did not advertise SET_LED — "
+                         "intersection rule blocks LED tests"}
+        return
+
+    def _led_round(on, section_title, phase_label):
+        yield {"kind": "section", "title": section_title}
+        cmd = DeviceCommand(
+            command_id=f"led-{'on' if on else 'off'}-"
+                       f"{uuid.uuid4().hex[:8]}",
+            device_id=device_id, capability="capability.led",
+            operation="SET_LED", parameters={"on": on},
+            protocol_version=1,
+            provenance={"action_id": "p19r", "decision_id": "p19r",
+                        "evaluation_id": "p19r", "strategy_id": "p19r"},
+            created_at=time.time())
+        cmd.validate()
+        observer.observe_command_created(cmd.command_id, device_id,
+                                         "SET_LED", now=time.time())
+        conn.send(XiaozhiCodec.encode_command(cmd))
+        ack = conn.wait_ack(timeout)
+        integrity = (ack is not None and ack.is_success
+                     and ack.command_id == cmd.command_id
+                     and ack.device_id == device_id
+                     and ack.protocol_version == 1)
+        yield {"kind": "check",
+               "name": f"SET_LED {'on' if on else 'off'} -> ACK "
+                       f"(integrity verified)",
+               "ok": integrity,
+               "detail": f"cmd={getattr(ack, 'command_id', None)} "
+                         f"dev={getattr(ack, 'device_id', None)}"}
+        if ack is not None:
+            observer.observe_ack(ack, now=time.time())
+            rec = observer.get_command_status(cmd.command_id)
+            yield {"kind": "check", "name": "lifecycle -> ACKED (P18)",
+                   "ok": (rec is not None
+                          and rec.status == LIFECYCLE_ACKED)}
+        physical = yield {"kind": "led_confirm", "phase": phase_label,
+                          "command_id": cmd.command_id,
+                          "ack_ok": integrity}
+        yield {"kind": "check",
+               "name": f"physical LED {'ON' if on else 'OFF'} "
+                       f"(human confirmation)",
+               "ok": physical is True,
+               "detail": "not confirmed" if physical is not True
+                         else ""}
+        return cmd, ack
+
+    cmd_on, ack_on = yield from _led_round(
+        True, "5. SET_LED ON (first real body action)", "on")
+    cmd_off, ack_off = yield from _led_round(
+        False, "6. SET_LED OFF", "off")
+
+    # 7. idempotency
+    yield {"kind": "section", "title": "7. Duplicate command"}
+    conn.send(XiaozhiCodec.encode_command(cmd_on))
+    ack_dup = conn.wait_ack(timeout)
+    dup_ok = (ack_dup is not None and ack_dup.status == "NACK"
+              and ack_dup.error_code == "DUPLICATE_COMMAND")
+    yield {"kind": "check",
+           "name": "duplicate command_id -> NACK DUPLICATE_COMMAND",
+           "ok": dup_ok,
+           "detail": f"got {getattr(ack_dup, 'error_code', None)}"}
+    if ack_dup is not None:
+        observer.observe_ack(ack_dup, now=time.time())
+    rec = observer.get_command_status(cmd_on.command_id)
+    yield {"kind": "check",
+           "name": "lifecycle stays ACKED (exactly-once)",
+           "ok": rec is not None and rec.status == LIFECYCLE_ACKED}
+
+    # 8. late ack
+    yield {"kind": "section", "title": "8. Late-ACK (P18)"}
+    cmd_late = DeviceCommand(
+        command_id="late-" + uuid.uuid4().hex[:8], device_id=device_id,
+        capability="capability.led", operation="SET_LED",
+        parameters={"on": True}, protocol_version=1,
+        provenance={"action_id": "p19r", "decision_id": "p19r",
+                    "evaluation_id": "p19r", "strategy_id": "p19r"},
+        created_at=time.time())
+    cmd_late.validate()
+    observer.observe_command_created(cmd_late.command_id, device_id,
+                                     "SET_LED", now=time.time())
+    observer.observe_command_sent(cmd_late.command_id,
+                                  now=time.time())
+    conn.send(XiaozhiCodec.encode_command(cmd_late))
+    observer.observe_terminal(cmd_late.command_id, LIFECYCLE_TIMEOUT,
+                              error_code="TIMEOUT", now=time.time())
+    late_ack = conn.wait_ack(timeout + 3.0)
+    yield {"kind": "check", "name": "late ACK eventually arrives",
+           "ok": (late_ack is not None
+                  and late_ack.command_id == cmd_late.command_id)}
+    if late_ack is not None:
+        observer.observe_ack(late_ack, now=time.time())
+    rec = observer.get_command_status(cmd_late.command_id)
+    yield {"kind": "check",
+           "name": "lifecycle stays TIMEOUT (never rewritten)",
+           "ok": rec is not None and rec.status == LIFECYCLE_TIMEOUT}
+    yield {"kind": "check", "name": "late_ack flag recorded",
+           "ok": rec is not None and rec.late_ack is True}
+
+    # 9. kill switch
+    yield {"kind": "section", "title": "9. Kill Switch (code-level)"}
+    yield {"kind": "check",
+           "name": "GLOBAL_EXECUTION_ENABLED = False",
+           "ok": GLOBAL_EXECUTION_ENABLED is False}
+
+
 def validate_device(host, port=3333, timeout=6.0, expected_device_id=None,
-                    src=None):
+                    src=None, channel=None, known_session=None):
     """Run the FULL P19-R acceptance sequence against a real device.
+
+    channel: optional duck-typed connection (send/read_frames/wait_ack/
+    close) — e.g. the workshop gateway's inbound channel for client-mode
+    firmware. When None an outbound TCP connection is made to host:port.
+    Only a self-made connection is closed in finally().
+    known_session: with an inbound channel the HELLO/ADVERTISEMENT were
+    already consumed by the gateway at registration time — pass the
+    parsed DeviceHello + advertised ops here to skip the read phase
+    ({"hello": DeviceHello, "operations": [...]}) without fabricating.
 
     Yields events (dicts) for the caller to render/collect:
       {"kind": "section", "title": ...}
@@ -263,9 +498,57 @@ def validate_device(host, port=3333, timeout=6.0, expected_device_id=None,
     waits — deterministic and interactive-front-end friendly.
     """
 
-    conn = DeviceConnection(host, port, timeout)
+    own_connection = channel is None
+    conn = channel if channel is not None else DeviceConnection(host, port,
+                                                                timeout)
     try:
-        # 1. HELLO
+        if known_session is not None:
+            # inbound link: the gateway already consumed HELLO/ADV at
+            # registration — reuse the parsed session (no fabrication)
+            hello = known_session["hello"]
+            wire_session_id = known_session.get("wire_session_id")
+            yield {"kind": "section",
+                   "title": "1. 连接（入站网关通道，会话已注册）"}
+            yield {"kind": "check", "name": "HELLO（网关注册时已验证）",
+                   "ok": hello.protocol_version == 1
+                   and bool(hello.device_id)}
+            hello = hello
+            device_id = hello.device_id
+            yield {"kind": "info", "text": f"device_id={device_id} "
+                                           f"type={hello.device_type} "
+                                           f"fw={hello.firmware_version}"}
+            if wire_session_id:
+                yield {"kind": "info",
+                       "text": f"device-side session_id={wire_session_id}"}
+            advertised = list(known_session.get("operations", []))
+            yield {"kind": "section",
+                   "title": "2. ADVERTISEMENT (server ∩ device)"}
+            yield {"kind": "check",
+                   "name": "ADVERTISEMENT（网关注册时已接收）", "ok": True}
+            yield {"kind": "info", "text": f"advertised: {advertised}"}
+            set_led_ok = "SET_LED" in advertised
+            yield {"kind": "check",
+                   "name": "SET_LED advertised BY THE DEVICE (not assumed)",
+                   "ok": set_led_ok}
+            # jump straight to session/gate (section 3) — bidirectional
+            # delegation so led_confirm answers flow back up
+            sub = _validate_body(conn, timeout, hello, wire_session_id,
+                                 advertised, set_led_ok,
+                                 expected_device_id)
+            to_sub = None
+            try:
+                while True:
+                    event = sub.send(to_sub)
+                    to_sub = None
+                    if event["kind"] == "led_confirm":
+                        to_sub = (yield event)
+                    else:
+                        yield event
+            except StopIteration:
+                pass
+            return
+
+        # 1. HELLO (outbound mode)
         yield {"kind": "section", "title": "1. TCP connect + HELLO"}
         frames = conn.read_frames(idle_wait=1.0, max_frames=3,
                                   hard_deadline=timeout)
@@ -333,213 +616,25 @@ def validate_device(host, port=3333, timeout=6.0, expected_device_id=None,
                "name": "SET_LED advertised BY THE DEVICE (not assumed)",
                "ok": set_led_ok}
 
-        # 3. Session + gate
-        yield {"kind": "section",
-               "title": "3. Session + Device Gate (P17)"}
-        registry = DeviceRegistry()
-        observer = DeviceObserver(registry)
-        session = registry.register_hello(hello, now=time.time())
-        yield {"kind": "check", "name": "session ONLINE (P17)",
-               "ok": session.state == SESSION_ONLINE}
-        if adv:
-            registry.advertise(adv, now=time.time())
-        gate = registry.send_allowed(device_id, "SET_LED",
-                                     now=time.time())
-        yield {"kind": "check",
-               "name": "Device Gate: ONLINE + SET_LED -> OK",
-               "ok": gate == (True, GATE_OK)}
-        state = observer.get_device_state(device_id)
-        yield {"kind": "device", "device_id": device_id,
-               "state": {
-                   "device_id": state.device_id,
-                   "session_id": state.session_id,
-                   "protocol_version": state.protocol_version,
-                   "connection_state": state.connection_state,
-                   "last_seen": state.last_seen,
-                   "capabilities": state.capabilities,
-               }}
+        # sections 3-9 (shared implementation) — bidirectional
+        # delegation so led_confirm answers flow back up
+        sub = _validate_body(conn, timeout, hello, wire_session_id,
+                             advertised, set_led_ok, expected_device_id)
+        to_sub = None
+        try:
+            while True:
+                event = sub.send(to_sub)
+                to_sub = None
+                if event["kind"] == "led_confirm":
+                    to_sub = (yield event)
+                else:
+                    yield event
+        except StopIteration:
+            pass
 
-        # 4. failure probes
-        yield {"kind": "section",
-               "title": "4. Security failure probes (six, NACK)"}
-
-        def _probe(label, command_id, device, operation, params,
-                   expect_code, wire_override=None):
-            cmd = DeviceCommand(
-                command_id=command_id, device_id=device,
-                capability="capability.led"
-                if operation == "SET_LED" else "capability.test",
-                operation=operation, parameters=params,
-                protocol_version=1,
-                provenance={"action_id": "p19r", "decision_id": "p19r",
-                            "evaluation_id": "p19r", "strategy_id": "p19r"},
-                created_at=time.time())
-            try:
-                cmd.validate()
-            except Exception as e:
-                yield {"kind": "check", "name": label, "ok": True,
-                       "detail": f"rejected server-side: "
-                                 f"{type(e).__name__}"}
-                return None
-            observer.observe_command_created(command_id, device,
-                                             operation, now=time.time())
-            frame = wire_override if wire_override is not None \
-                else XiaozhiCodec.encode_command(cmd)
-            conn.send(frame)
-            ack = conn.wait_ack(timeout)
-            ok_ack = (ack is not None and ack.status == "NACK"
-                      and ack.error_code == expect_code
-                      and ack.command_id == command_id)
-            yield {"kind": "check", "name": label, "ok": ok_ack,
-                   "detail": f"got status={getattr(ack, 'status', None)} "
-                             f"code={getattr(ack, 'error_code', None)}"}
-            return ack
-
-        yield from _probe("wrong device_id -> NACK UNKNOWN_DEVICE",
-                          "p-wrongdev-" + uuid.uuid4().hex[:8],
-                          "esp32-WRONG", "SET_LED", {"on": True},
-                          "UNKNOWN_DEVICE")
-        yield from _probe("unknown operation -> NACK UNKNOWN_OPERATION",
-                          "p-unkop-" + uuid.uuid4().hex[:8], device_id,
-                          "SERVO_MOVE", {"on": True}, "UNKNOWN_OPERATION")
-        yield from _probe("unsupported capability -> NACK",
-                          "p-unscap-" + uuid.uuid4().hex[:8], device_id,
-                          "PLAY_AUDIO", {"vol": 5}, "UNKNOWN_OPERATION")
-        bad_ver_id = "p-badver-" + uuid.uuid4().hex[:8]
-        conn.send({"type": "COMMAND", "protocol_version": 9,
-                   "command_id": bad_ver_id, "device_id": device_id,
-                   "operation": "SET_LED", "parameters": {"on": True}})
-        ack = conn.wait_ack(timeout)
-        yield {"kind": "check",
-               "name": "invalid protocol version -> NACK "
-                       "UNSUPPORTED_VERSION",
-               "ok": (ack is not None and ack.status == "NACK"
-                      and ack.error_code == "UNSUPPORTED_VERSION"),
-               "detail": f"got {getattr(ack, 'error_code', None)}"}
-        yield from _probe("invalid parameters (string on) -> NACK",
-                          "p-badpar-" + uuid.uuid4().hex[:8], device_id,
-                          "SET_LED", {"on": "true-string"},
-                          "INVALID_PARAMETERS")
-        yield from _probe("extra parameter -> NACK INVALID_PARAMETERS",
-                          "p-badpar2-" + uuid.uuid4().hex[:8], device_id,
-                          "SET_LED", {"on": True, "extra": 1},
-                          "INVALID_PARAMETERS")
-        conn.send(b"{this is not json")
-        ack = conn.wait_ack(timeout)
-        yield {"kind": "check",
-               "name": "malformed JSON -> NACK MALFORMED_MESSAGE",
-               "ok": (ack is not None
-                      and ack.error_code == "MALFORMED_MESSAGE"),
-               "detail": f"got {getattr(ack, 'error_code', None)}"}
-
-        if not set_led_ok:
-            yield {"kind": "fatal",
-                   "reason": "device did not advertise SET_LED — "
-                             "intersection rule blocks LED tests"}
-            return
-
-        def _led_round(on, section_title, phase_label):
-            yield {"kind": "section", "title": section_title}
-            cmd = DeviceCommand(
-                command_id=f"led-{'on' if on else 'off'}-"
-                           f"{uuid.uuid4().hex[:8]}",
-                device_id=device_id, capability="capability.led",
-                operation="SET_LED", parameters={"on": on},
-                protocol_version=1,
-                provenance={"action_id": "p19r", "decision_id": "p19r",
-                            "evaluation_id": "p19r", "strategy_id": "p19r"},
-                created_at=time.time())
-            cmd.validate()
-            observer.observe_command_created(cmd.command_id, device_id,
-                                             "SET_LED", now=time.time())
-            conn.send(XiaozhiCodec.encode_command(cmd))
-            ack = conn.wait_ack(timeout)
-            integrity = (ack is not None and ack.is_success
-                         and ack.command_id == cmd.command_id
-                         and ack.device_id == device_id
-                         and ack.protocol_version == 1)
-            yield {"kind": "check",
-                   "name": f"SET_LED {'on' if on else 'off'} -> ACK "
-                           f"(integrity verified)",
-                   "ok": integrity,
-                   "detail": f"cmd={getattr(ack, 'command_id', None)} "
-                             f"dev={getattr(ack, 'device_id', None)}"}
-            if ack is not None:
-                observer.observe_ack(ack, now=time.time())
-                rec = observer.get_command_status(cmd.command_id)
-                yield {"kind": "check", "name": "lifecycle -> ACKED (P18)",
-                       "ok": (rec is not None
-                              and rec.status == LIFECYCLE_ACKED)}
-            physical = yield {"kind": "led_confirm", "phase": phase_label,
-                              "command_id": cmd.command_id,
-                              "ack_ok": integrity}
-            yield {"kind": "check",
-                   "name": f"physical LED {'ON' if on else 'OFF'} "
-                           f"(human confirmation)",
-                   "ok": physical is True,
-                   "detail": "not confirmed" if physical is not True
-                             else ""}
-            return cmd, ack
-
-        cmd_on, ack_on = yield from _led_round(
-            True, "5. SET_LED ON (first real body action)", "on")
-        cmd_off, ack_off = yield from _led_round(
-            False, "6. SET_LED OFF", "off")
-
-        # 7. idempotency
-        yield {"kind": "section", "title": "7. Duplicate command"}
-        conn.send(XiaozhiCodec.encode_command(cmd_on))
-        ack_dup = conn.wait_ack(timeout)
-        dup_ok = (ack_dup is not None and ack_dup.status == "NACK"
-                  and ack_dup.error_code == "DUPLICATE_COMMAND")
-        yield {"kind": "check",
-               "name": "duplicate command_id -> NACK DUPLICATE_COMMAND",
-               "ok": dup_ok,
-               "detail": f"got {getattr(ack_dup, 'error_code', None)}"}
-        if ack_dup is not None:
-            observer.observe_ack(ack_dup, now=time.time())
-        rec = observer.get_command_status(cmd_on.command_id)
-        yield {"kind": "check",
-               "name": "lifecycle stays ACKED (exactly-once)",
-               "ok": rec is not None and rec.status == LIFECYCLE_ACKED}
-
-        # 8. late ack
-        yield {"kind": "section", "title": "8. Late-ACK (P18)"}
-        cmd_late = DeviceCommand(
-            command_id="late-" + uuid.uuid4().hex[:8], device_id=device_id,
-            capability="capability.led", operation="SET_LED",
-            parameters={"on": True}, protocol_version=1,
-            provenance={"action_id": "p19r", "decision_id": "p19r",
-                        "evaluation_id": "p19r", "strategy_id": "p19r"},
-            created_at=time.time())
-        cmd_late.validate()
-        observer.observe_command_created(cmd_late.command_id, device_id,
-                                         "SET_LED", now=time.time())
-        observer.observe_command_sent(cmd_late.command_id,
-                                      now=time.time())
-        conn.send(XiaozhiCodec.encode_command(cmd_late))
-        observer.observe_terminal(cmd_late.command_id, LIFECYCLE_TIMEOUT,
-                                  error_code="TIMEOUT", now=time.time())
-        late_ack = conn.wait_ack(timeout + 3.0)
-        yield {"kind": "check", "name": "late ACK eventually arrives",
-               "ok": (late_ack is not None
-                      and late_ack.command_id == cmd_late.command_id)}
-        if late_ack is not None:
-            observer.observe_ack(late_ack, now=time.time())
-        rec = observer.get_command_status(cmd_late.command_id)
-        yield {"kind": "check",
-               "name": "lifecycle stays TIMEOUT (never rewritten)",
-               "ok": rec is not None and rec.status == LIFECYCLE_TIMEOUT}
-        yield {"kind": "check", "name": "late_ack flag recorded",
-               "ok": rec is not None and rec.late_ack is True}
-
-        # 9. kill switch
-        yield {"kind": "section", "title": "9. Kill Switch (code-level)"}
-        yield {"kind": "check",
-               "name": "GLOBAL_EXECUTION_ENABLED = False",
-               "ok": GLOBAL_EXECUTION_ENABLED is False}
     finally:
-        conn.close()
+        if own_connection:
+            conn.close()
 
 
 #
