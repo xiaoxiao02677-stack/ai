@@ -100,7 +100,8 @@ if DeviceGateway is not None:
         host="0.0.0.0", port=3333,
         on_device_attach=lambda hello, adv, ip, port, wire: _attach_device(
             hello, adv, ip, port, wire, origin="gateway-inbound"),
-        on_device_detach=_detach)
+        on_device_detach=_detach,
+        on_frame=lambda device_id, doc: refresh_device_activity(device_id))
     gateway.start()
 
 

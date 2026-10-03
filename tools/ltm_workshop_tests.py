@@ -271,6 +271,27 @@ check("workshop API: command endpoints route through "
 check("workshop API: no Gateway bypass (no adapter.run outside gateway)",
       "adapter.run(" not in api_src)
 
+# ---------------------------------------------------------------------------
+section("25. gateway wiring regression (heartbeat refresh)")
+# This bug escaped the suite 4 times (file rewrites dropping the
+# on_frame wiring): the in-process tests never instantiate the
+# gateway, so a missing callback was invisible. STATIC check: the
+# panel source must wire on_frame to refresh_device_activity.
+_panel_src = open(API_FILE, encoding="utf-8").read()
+check("DeviceGateway construction wires on_frame -> "
+      "refresh_device_activity (heartbeat refresh wiring present)",
+      "on_frame=lambda device_id, doc: "
+      "refresh_device_activity(device_id)" in _panel_src,
+      "the gateway construction in config/workshop_panel.py lost "
+      "the on_frame callback — device heartbeats will be silently "
+      "ignored and every device will flip STALE/DISCONNECTED. "
+      "Restore: on_frame=lambda device_id, doc: "
+      "refresh_device_activity(device_id)")
+check("on_device_detach wired (link-loss state sync present)",
+      "on_device_detach=_detach" in _panel_src)
+check("on_device_attach wired with gateway-inbound origin",
+      'origin="gateway-inbound"' in _panel_src)
+
 print(f"\n{'=' * 58}")
 print(f"WORKSHOP TESTS: {ok} passed, {fail} failed")
 print(f"{'=' * 58}")
