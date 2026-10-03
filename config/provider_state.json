@@ -16,8 +16,8 @@
     },
     "openai_compatible_llm": {
       "status": "connected",
-      "latencyMs": 3105,
-      "lastTestAt": "2026-10-03T18:05:06",
+      "latencyMs": 3013,
+      "lastTestAt": "2026-10-03T18:28:16",
       "lastError": ""
     }
   },

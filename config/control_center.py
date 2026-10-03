@@ -292,6 +292,135 @@ def tls_control(action: str = "status"):
 
 
 # ---------------------------------------------------------------------------
+# Tools: TTS preview with parameters + apply voice to system config
+# ---------------------------------------------------------------------------
+import asyncio
+import uuid
+from pydantic import BaseModel
+
+
+class TTSPreviewReq(BaseModel):
+    text: str
+    voice: str = "zh-CN-XiaoxiaoNeural"
+    rate: str = "100"
+    volume: str = "100"
+
+
+_VOICE_WHITELIST = {
+    "zh-CN-XiaoxiaoNeural", "zh-CN-XiaoyiNeural", "zh-CN-YunxiNeural",
+    "zh-CN-YunyangNeural", "zh-CN-YunjianNeural",
+    "en-US-AvaMultilingualNeural", "ja-JP-NanamiNeural",
+}
+
+
+@router.post("/tts-preview")
+def tts_preview(req: TTSPreviewReq):
+    """Synthesize a preview with the given parameters (edge_tts).
+
+    edge_tts itself supports voice + rate (pitch is fixed); volume
+    is applied by ffmpeg post-processing so the preview matches what
+    the user hears.
+    """
+    text = (req.text or "").strip()
+    if not text or len(text) > 500:
+        raise HTTPException(400, "text required (<=500 chars)")
+    voice = req.voice if req.voice in _VOICE_WHITELIST \
+        else "zh-CN-XiaoxiaoNeural"
+    try:
+        rate_val = int(float(req.rate))
+        rate_val = max(-50, min(100, rate_val))   # edge rate: -50..100
+    except (ValueError, TypeError):
+        rate_val = 0
+    try:
+        vol = max(0.0, min(2.0, float(req.volume) / 100.0))
+    except (ValueError, TypeError):
+        vol = 1.0
+
+    t0 = time.time()
+    try:
+        import sys
+        src_dir = str(PROJECT_ROOT / "src")
+        if src_dir not in sys.path:
+            sys.path.insert(0, src_dir)
+        from open_llm_vtuber.tts.edge_tts import TTSEngine
+        engine = TTSEngine(voice=voice)
+        name = "cc_tts_" + uuid.uuid4().hex[:8]
+        raw_path = asyncio.run(
+            engine.async_generate_audio(text, name))
+        if not raw_path or not os.path.isfile(raw_path):
+            return {"error": "synthesis produced no file",
+                    "audio_url": None, "latency_ms": None}
+        # apply rate/volume via ffmpeg into the cache dir
+        out_name = "cc_tts_fx_" + uuid.uuid4().hex[:8] + ".mp3"
+        out_path = _CACHE_DIR / out_name
+        import subprocess as _sp
+        cmd = ["ffmpeg", "-y", "-i", raw_path,
+               "-filter:a",
+               f"atempo={max(0.5, min(2.0, 1.0 + rate_val / 100.0))}"
+               f",volume={vol:.2f}",
+               str(out_path)]
+        r = _sp.run(cmd, capture_output=True, timeout=60)
+        if r.returncode != 0 or not out_path.exists():
+            return {"error": "audio post-processing failed",
+                    "audio_url": None, "latency_ms": None}
+        return {"audio_url": "/cache/" + out_name,
+                "latency_ms": int((time.time() - t0) * 1000),
+                "error": None}
+    except Exception as e:
+        return {"error": str(e)[:200], "audio_url": None,
+                "latency_ms": int((time.time() - t0) * 1000)}
+
+
+class TTSApplyReq(BaseModel):
+    voice: str
+
+
+@router.post("/tts-apply")
+def tts_apply(req: TTSApplyReq):
+    """Persist the chosen voice into conf.yaml (tts_config.<engine>
+    .voice) — ruamel comment-preserving, backed up, then restart."""
+    voice = req.voice if req.voice in _VOICE_WHITELIST \
+        else "zh-CN-XiaoxiaoNeural"
+    if not CONF_PATH.exists():
+        raise HTTPException(500, "conf.yaml not found")
+    try:
+        yaml_handler.preserve_quotes = True
+        yaml_handler.width = 4096
+        data = yaml_handler.load(StringIO(
+            CONF_PATH.read_text(encoding="utf-8")))
+    except Exception as e:
+        raise HTTPException(500, f"conf parse error: {e}")
+    tts = data.get("character_config", {}).get("tts_config")
+    if not isinstance(tts, dict):
+        raise HTTPException(500, "tts_config section missing")
+    engine = tts.get("tts_model") or "edge_tts"
+    engine_cfg = tts.get(engine)
+    if isinstance(engine_cfg, dict):
+        engine_cfg["voice"] = voice
+    else:
+        tts[engine] = {"voice": voice}
+    buf = StringIO()
+    yaml_handler.dump(data, buf)
+    tmp = CONF_PATH.with_suffix(".yaml.tts-tmp")
+    tmp.write_text(buf.getvalue(), encoding="utf-8")
+    os.replace(tmp, CONF_PATH)
+    # backup + restart (owner-safe)
+    from datetime import datetime as _dt
+    bdir = _CONF_DIR / "backups"
+    bdir.mkdir(parents=True, exist_ok=True)
+    import shutil
+    shutil.copy2(CONF_PATH, bdir / ("conf-%s-tts-voice.yaml" %
+                 _dt.now().strftime("%Y%m%d-%H%M%S")))
+    script = _CONF_DIR / "restart_server.sh"
+    subprocess.Popen(["bash", str(script)],
+                     stdout=subprocess.DEVNULL,
+                     stderr=subprocess.DEVNULL,
+                     start_new_session=True)
+    return {"ok": True, "voice": voice,
+            "message": "voice persisted; restarting (~40s)"}
+
+
+# ---------------------------------------------------------------------------
 # System: restart the backend (owner-safe)
 # ---------------------------------------------------------------------------
 @router.post("/restart")

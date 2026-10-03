@@ -217,13 +217,34 @@ label { display:block; margin:9px 0 3px; color:var(--dim);
             <div id="tl-asr-result" class="mask">结果将显示在这里</div>
           </div>
         </div>
-        <div class="panel"><h3>🔊 TTS 试听</h3>
+        <div class="panel"><h3>🔊 TTS 试听（参数可调）</h3>
           <label>文本</label><textarea id="tl-tts-text"
-            style="height:70px;">你好，这是总控台的语音测试。</textarea>
-          <div style="margin-top:10px;"><button class="btn primary"
-            onclick="toolTts()">合成并播放</button></div>
+            style="height:60px;">你好，这是总控台的语音测试。</textarea>
+          <div class="grid" style="grid-template-columns:1fr 1fr 1fr;gap:8px;margin-top:8px;">
+            <div><label>音色</label><select id="tl-tts-voice">
+              <option value="zh-CN-XiaoxiaoNeural">晓晓（女·温柔）</option>
+              <option value="zh-CN-XiaoyiNeural">晓伊（女·活泼）</option>
+              <option value="zh-CN-YunxiNeural">云希（男·沉稳）</option>
+              <option value="zh-CN-YunyangNeural">云扬（男·新闻）</option>
+              <option value="zh-CN-YunjianNeural">云健（男·体育）</option>
+              <option value="en-US-AvaMultilingualNeural">Ava（EN）</option>
+              <option value="ja-JP-NanamiNeural">Nanami（JA）</option>
+            </select></div>
+            <div><label>语速 (%)</label><input id="tl-tts-rate"
+              type="number" min="50" max="200" step="5" value="100"></div>
+            <div><label>音量 (%)</label><input id="tl-tts-volume"
+              type="number" min="0" max="100" step="5" value="100"></div>
+          </div>
+          <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap;">
+            <button class="btn primary" onclick="toolTts()">用当前参数试听</button>
+            <button class="btn" onclick="ttsPreviewDefault()">恢复系统当前</button>
+            <button class="btn" onclick="ttsApplySystem()"
+              title="把当前音色写入 conf.yaml 的 edge_tts.voice（语速/音量仅用于试听，edge_tts 引擎不持久化这两项）">
+              应用音色到系统配置</button>
+          </div>
           <div style="margin-top:12px;"><audio id="tl-tts-audio"
             controls style="width:100%;display:none;"></audio></div>
+          <div class="mask" id="tl-tts-note" style="margin-top:6px;"></div>
         </div>
       </div>
     </div>
@@ -327,9 +348,17 @@ async function chipsLoad() {
     const c = [];
     c.push(`<span class="chip"><span class="dot ${d.devices.online ?
       "on":"off"}"></span>设备 ${d.devices.online}/${d.devices.total}</span>`);
-    for (const p of d.providerHealth.slice(0, 4))
+    // health chips: DEFAULT provider per category (the ones actually
+    // in use), not every historical sidecar record
+    const pv = await j("/providers/api/overview");
+    for (const cat of pv.categories) {
+      if (!cat.defaultId) continue;
+      const dp = cat.providers.find(p => p.id === cat.defaultId);
+      if (!dp) continue;
+      const st = dp.enabled ? (dp.status || "unknown") : "disabled";
       c.push(`<span class="chip"><span class="dot
-        ${DOT[p.status]||"warn"}"></span>${p.category} ${p.status}</span>`);
+        ${DOT[st]||"warn"}"></span>${cat.label} ${st}</span>`);
+    }
     c.push(`<span class="chip">运行 ${d.uptimeMinutes} 分钟</span>`);
     el("chips").innerHTML = c.join("");
   } catch {}
@@ -546,7 +575,10 @@ async function dvLed(on) {
 let memConf = null;
 async function memLoad() {
   const sessions = await j("/memory/api/sessions");
-  memConf = sessions[0]?.conf_uid || null;
+  // sessions = { conf_uids: ["a", "b", ...] } (string array)
+  const uids = Array.isArray(sessions) ? sessions
+    : (sessions.conf_uids || []);
+  memConf = uids.includes("mao_pro_001") ? "mao_pro_001" : uids[0];
   if (!memConf) {
     el("mem-session").textContent = "无会话";
     el("mem-rows").innerHTML = `<tr><td colspan="6">无数据</td></tr>`;
@@ -554,31 +586,40 @@ async function memLoad() {
   }
   el("mem-session").textContent = memConf;
   const mems = await j(`/memory/api/memories?conf_uid=${memConf}`);
-  el("mem-stats").textContent = `${mems.length} 条记忆`;
+  const stats = await j(`/memory/api/debug?conf_uid=${memConf}`).catch(
+    () => null);
+  el("mem-stats").textContent = `${mems.length} 条记忆` +
+    (stats && stats.stats ? ` · ${stats.stats.active_memories ?? "?"} 活跃` : "");
   el("mem-toolbar").innerHTML =
-    `<input id="mem-q" placeholder="搜索内容/关键词…"
-      style="width:220px;display:inline-block;" onkeydown="if(event.key==='Enter')memSearch()">
+    `<select id="mem-conf" onchange="memConf=this.value;memRender()"
+      style="width:200px;display:inline-block;">
+      ${uids.map(u => `<option value="${u}" ${u===memConf?"selected":""}>
+        ${u}</option>`).join("")}
+    </select>
+    <input id="mem-q" placeholder="搜索内容/关键词…"
+      style="width:200px;display:inline-block;" onkeydown="if(event.key==='Enter')memSearch()">
     <button class="btn" onclick="memSearch()">搜索</button>`;
-  el("mem-rows").innerHTML = mems.map(m => `<tr>
+  memRender(mems);
+}
+function memRender(mems) {
+  if (mems === undefined) mems = memLoad.current;
+  memLoad.current = mems;
+  el("mem-rows").innerHTML = (mems || []).map(m => `<tr>
     <td>${esc(m.memory_type||"—")}</td>
     <td>${esc((m.content||"").slice(0,80))}</td>
     <td>${esc((m.keywords||[]).join(", "))}</td>
-    <td>${m.score??"—"}</td>
+    <td>${esc(m.importance ?? "—")}</td>
     <td>${esc(m.status||"—")}</td>
     <td><button class="btn danger" onclick="memDel('${m.memory_id}')">删</button></td>
-  </tr>`).join("");
+  </tr>`).join("") || `<tr><td colspan="6">无记忆</td></tr>`;
 }
 async function memSearch() {
   const q = el("mem-q").value.trim();
-  if (!q) return memLoad();
-  const mems = await j(`/memory/api/memories?conf_uid=${memConf}&q=${encodeURIComponent(q)}`);
-  el("mem-rows").innerHTML = mems.map(m => `<tr>
-    <td>${esc(m.memory_type||"—")}</td>
-    <td>${esc((m.content||"").slice(0,80))}</td>
-    <td>${esc((m.keywords||[]).join(", "))}</td>
-    <td>${m.score??"—"}</td><td>${esc(m.status||"—")}</td>
-    <td><button class="btn danger" onclick="memDel('${m.memory_id}')">删</button></td>
-  </tr>`).join("");
+  const url = q ? `/memory/api/memories?conf_uid=${memConf}&q=${
+    encodeURIComponent(q)}`
+    : `/memory/api/memories?conf_uid=${memConf}`;
+  const mems = await j(url);
+  memRender(mems);
 }
 async function memDel(id) {
   if (!confirm("删除这条记忆？")) return;
@@ -591,14 +632,27 @@ async function cfgLoad() {
   const st = await j("/config/api/state");
   el("cfg-meta").textContent = st.mtime || "";
   const raw = await j("/config/api/raw");
-  el("cfg-raw").value = typeof raw === "string" ? raw : raw.yaml || "";
-  // key summary
-  const y = raw.yaml || "";
-  const keys = ["system_config", "character_config", "asr_config",
-    "tts_config", "vad_config"];
-  el("cfg-key").innerHTML = keys.map(k => {
-    const m = y.match(new RegExp("^  " + k + ":" , "m"));
-    return `<div class="k">${k}</div><div>${m?"✓ 存在":"—"}</div>`;
+  // raw = { raw: "<yaml text>" } (the /config/api/raw contract)
+  const y = typeof raw === "string" ? raw : (raw.raw ?? raw.yaml ?? "");
+  el("cfg-raw").value = y;
+  // key summary from the REAL tree
+  const t = st.tree || {};
+  const rows = [
+    ["系统", t.system_config, k => k.host + ":" + k.port],
+    ["Agent", t.character_config?.agent_config,
+     k => (k.llm_provider || "?")],
+    ["LLM 默认", t.character_config?.agent_config,
+     k => (k.llm_provider || "?")],
+    ["TTS", t.character_config?.tts_config,
+     k => (k.tts_model || "?") + " · 音色 " +
+       ((k[k.tts_model] || {}).voice || "?")],
+    ["STT", t.character_config?.asr_config,
+     k => (k.asr_model || "?")],
+  ];
+  el("cfg-key").innerHTML = rows.map(([name, obj, fn]) => {
+    let v = "—";
+    try { if (obj) v = fn(obj); } catch {}
+    return `<div class="k">${name}</div><div>${esc(v)}</div>`;
   }).join("");
 }
 async function cfgReload() { cfgLoad(); toast("已重新载入"); }
@@ -626,14 +680,46 @@ async function toolAsr() {
 async function toolTts() {
   const text = el("tl-tts-text").value.trim();
   if (!text) return toast("文本为空", true);
-  const fd = new FormData(); fd.append("text", text);
+  const voice = el("tl-tts-voice").value;
+  const rate = el("tl-tts-rate").value || "100";
+  const volume = el("tl-tts-volume").value || "100";
   try {
-    const r = await fetch("/tts-ws", {method:"POST", body:fd});
-    const blob = await r.blob();
-    const url = URL.createObjectURL(blob);
-    const a = el("tl-tts-audio"); a.src = url; a.style.display = "block";
-    a.play();
+    // preview with the CURRENT parameters through the cc API
+    const r = await j(API + "/tts-preview", {method:"POST",
+      body: JSON.stringify({text, voice, rate, volume})});
+    if (r.audio_url) {
+      const a = el("tl-tts-audio");
+      a.src = r.audio_url; a.style.display = "block"; a.play();
+      el("tl-tts-note").textContent =
+        `音色 ${voice} · 语速 ${rate}% · 音量 ${volume}%` +
+        (r.latency_ms != null ? ` · 合成 ${r.latency_ms}ms` : "");
+    } else {
+      toast(r.error || "合成失败", true);
+    }
   } catch(e){ toast("TTS 失败: " + e.message, true); }
+}
+async function ttsPreviewDefault() {
+  try {
+    const st = await j("/config/api/state");
+    const tts = st.tree?.character_config?.tts_config || {};
+    const engine = tts.tts_model || "edge_tts";
+    const cur = (tts[engine] || {}).voice
+      || "zh-CN-XiaoxiaoNeural";
+    el("tl-tts-voice").value = cur;
+    el("tl-tts-rate").value = "100";
+    el("tl-tts-volume").value = "100";
+    toast(`已恢复系统当前: ${cur}`);
+  } catch(e){ toast(e.message, true); }
+}
+async function ttsApplySystem() {
+  const voice = el("tl-tts-voice").value;
+  if (!confirm(`把 edge_tts 音色设为 ${voice} 并重启后端？`)) return;
+  try {
+    await j(API + "/tts-apply", {method:"POST",
+      body: JSON.stringify({voice})});
+    toast("已写入 conf.yaml 并重启，约 40 秒后生效");
+    setTimeout(() => location.reload(), 40000);
+  } catch(e){ toast(e.message, true); }
 }
 
 // ---------------- LOGS ----------------
