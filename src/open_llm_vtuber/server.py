@@ -50,6 +50,13 @@ try:
 except ImportError:  # provider center is optional
     providers_router = None
 
+# Control Center (config/control_center.py) — the top-level console
+# aggregating all management surfaces (API at /cc/api)
+try:
+    from config.control_center import router as cc_router
+except ImportError:  # control center is optional
+    cc_router = None
+
 
 # Create a custom StaticFiles class that adds CORS headers
 class CORSStaticFiles(StarletteStaticFiles):
@@ -148,6 +155,10 @@ class WebSocketServer:
         if providers_router is not None:
             self.app.include_router(providers_router)
 
+        # Control Center: API routes under /cc/api
+        if cc_router is not None:
+            self.app.include_router(cc_router)
+
         # Initialize and include proxy routes if proxy is enabled
         system_config = config.system_config
         if hasattr(system_config, "enable_proxy") and system_config.enable_proxy:
@@ -223,6 +234,15 @@ class WebSocketServer:
                 CORSStaticFiles(
                     directory="config/provider_web", html=True),
                 name="providers_panel",
+            )
+
+        # Control Center: static frontend under /cc
+        if cc_router is not None:
+            self.app.mount(
+                "/cc",
+                CORSStaticFiles(
+                    directory="config/control_web", html=True),
+                name="control_center",
             )
 
         # Mount main frontend last (as catch-all)

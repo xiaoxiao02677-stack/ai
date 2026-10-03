@@ -2,8 +2,8 @@
   "tts": {
     "edge_tts": {
       "status": "connected",
-      "latencyMs": 2197,
-      "lastTestAt": "2026-10-03T17:57:25",
+      "latencyMs": 2467,
+      "lastTestAt": "2026-10-03T18:03:11",
       "lastError": ""
     }
   },
@@ -13,6 +13,20 @@
       "latencyMs": 0,
       "lastTestAt": "2026-10-03T17:57:37",
       "lastError": "<urlopen error [Errno 111] Connection refused>"
+    },
+    "openai_compatible_llm": {
+      "status": "connected",
+      "latencyMs": 3105,
+      "lastTestAt": "2026-10-03T18:05:06",
+      "lastError": ""
+    }
+  },
+  "stt": {
+    "sherpa_onnx_asr": {
+      "status": "error",
+      "latencyMs": 4898,
+      "lastTestAt": "2026-10-03T18:03:36",
+      "lastError": "accept_waveform(): incompatible function arguments. The following argument types are supported:\n    1. (self: _sherpa_onnx.OfflineStream, sample_rate: float, waveform: list[float]) -> None\n\nInvoked with: <_sherpa_onnx.OfflineStream object at 0x798cf0542ab0>, 16000, b''"
     }
   }
 }

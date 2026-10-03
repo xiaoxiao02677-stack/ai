@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Control Center · 屿禾</title>
+<style>
+:root { --bg:#0f1115; --card:#1a1e26; --line:#2a3140; --tx:#e8ecf3;
+        --dim:#8a94a6; --acc:#5b8cff; --ok:#3ddc84; --err:#ff5c5c; }
+* { box-sizing:border-box; margin:0; padding:0; }
+body { background:var(--bg); color:var(--tx); font:14px/1.55 system-ui,
+  "PingFang SC","Microsoft YaHei",sans-serif; padding:24px; }
+h1 { font-size:22px; margin-bottom:4px; }
+.sub { color:var(--dim); font-size:13px; margin-bottom:20px; }
+.grid { display:grid; gap:14px; margin-bottom:22px; }
+.nav { grid-template-columns:repeat(auto-fill,minmax(170px,1fr)); }
+.cards { grid-template-columns:repeat(auto-fill,minmax(240px,1fr)); }
+.card { background:var(--card); border:1px solid var(--line);
+  border-radius:12px; padding:16px; text-decoration:none; color:var(--tx);
+  transition:.15s; display:block; }
+.card:hover { border-color:var(--acc); transform:translateY(-2px); }
+.card .icon { font-size:24px; margin-bottom:6px; }
+.card .name { font-weight:600; margin-bottom:2px; }
+.card .desc { color:var(--dim); font-size:12px; }
+.panel { background:var(--card); border:1px solid var(--line);
+  border-radius:12px; padding:16px; }
+.panel h3 { font-size:14px; margin-bottom:12px; color:var(--dim);
+  font-weight:500; }
+.dot { display:inline-block; width:8px; height:8px; border-radius:50%;
+  margin-right:6px; }
+.dot.on { background:var(--ok); } .dot.off { background:var(--err); }
+.row { display:flex; justify-content:space-between; padding:6px 0;
+  border-bottom:1px solid var(--line); font-size:13px; }
+.row:last-child { border-bottom:none; }
+.row .v { color:var(--dim); }
+table { width:100%; border-collapse:collapse; font-size:13px; }
+th { text-align:left; color:var(--dim); font-weight:500; font-size:11px;
+  padding:6px 8px; border-bottom:1px solid var(--line); }
+td { padding:7px 8px; border-bottom:1px solid var(--line); }
+.btn { background:var(--acc); border:none; color:#fff; padding:8px 18px;
+  border-radius:8px; cursor:pointer; font-size:13px; }
+.btn.warn { background:transparent; border:1px solid var(--err);
+  color:var(--err); }
+.chips { display:flex; flex-wrap:wrap; gap:8px; }
+.chip { background:var(--bg); border:1px solid var(--line); padding:5px 12px;
+  border-radius:999px; font-size:12px; }
+header { display:flex; justify-content:space-between; align-items:center;
+  margin-bottom:8px; }
+#toast { position:fixed; bottom:24px; right:24px; background:var(--card);
+  border:1px solid var(--acc); border-radius:10px; padding:12px 18px;
+  display:none; z-index:9; }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>🎛️ Control Center</h1>
+    <div class="sub">系统总控台 · <span id="meta"></span></div>
+  </div>
+  <div style="display:flex;gap:10px;">
+    <button class="btn" onclick="location.reload()">刷新</button>
+    <button class="btn warn" onclick="restart()">重启后端</button>
+  </div>
+</header>
+
+<div class="grid nav" id="nav">
+  <a class="card" href="/providers/"><div class="icon">🔌</div>
+    <div class="name">Providers</div>
+    <div class="desc">LLM / TTS / STT / 接口配置与测试</div></a>
+  <a class="card" href="/workshop/"><div class="icon">🤖</div>
+    <div class="name">Devices · 屿禾工坊</div>
+    <div class="desc">设备状态 / 命令 / 生命周期</div></a>
+  <a class="card" href="/memory/"><div class="icon">🧠</div>
+    <div class="name">Memory</div>
+    <div class="desc">长期记忆浏览与管理</div></a>
+  <a class="card" href="/config/"><div class="icon">⚙️</div>
+    <div class="name">Config</div>
+    <div class="desc">conf.yaml 高级编辑</div></a>
+  <a class="card" href="/" target="_blank"><div class="icon">💬</div>
+    <div class="name">AI Chat</div>
+    <div class="desc">聊天前端</div></a>
+  <a class="card" href="/web-tool/index.html" target="_blank">
+    <div class="icon">🛠️</div><div class="name">Web 工具</div>
+    <div class="desc">ASR / TTS 调试</div></a>
+</div>
+
+<div class="grid cards">
+  <div class="panel"><h3>🖥️ 服务状态</h3><div id="services"></div></div>
+  <div class="panel"><h3>🤖 设备</h3><div id="devices"></div></div>
+  <div class="panel"><h3>🔌 Provider 健康</h3><div id="providers"></div></div>
+  <div class="panel"><h3>🧠 记忆库</h3><div id="memories"></div></div>
+  <div class="panel"><h3>💾 存储 / 版本</h3><div id="storage"></div></div>
+</div>
+
+<div id="toast"></div>
+<script>
+async function load() {
+  const d = await (await fetch("/cc/api/overview")).json();
+  document.getElementById("meta").textContent =
+    "运行 " + d.uptimeMinutes + " 分钟 · " +
+    d.git.commit + (d.git.clean ? " · clean" : " · 有未提交") +
+    " · 生成于 " + d.generatedAt;
+
+  document.getElementById("services").innerHTML = d.services.map(s =>
+    `<div class="row"><span><span class="dot ${s.ok ? "on" : "off"}">` +
+    `</span>${s.name}</span><span class="v">${s.ok ? "正常" : "不可用"}` +
+    `</span></div>`).join("");
+
+  document.getElementById("devices").innerHTML =
+    `<div class="row"><span>在线</span><span class="v">` +
+    `${d.devices.online} / ${d.devices.total}</span></div>` +
+    `<div class="row"><span>STALE / 断开</span><span class="v">` +
+    `${d.devices.stale} / ${d.devices.disconnected}</span></div>` +
+    `<div class="row"><span>设备</span><span class="v">` +
+    (d.devices.ids.join("，") || "无") + `</span></div>`;
+
+  const ph = d.providerHealth.length ? d.providerHealth.map(p =>
+    `<span class="chip">${p.category}/${p.id}: ${p.status}` +
+    (p.latencyMs != null ? " · " + p.latencyMs + "ms" : "") +
+    `</span>`).join("") : '<span class="v">尚无测试记录（去 Providers 测一次）</span>';
+  document.getElementById("providers").innerHTML =
+    `<div class="chips">${ph}</div>`;
+
+  document.getElementById("memories").innerHTML = d.memories.length
+    ? d.memories.map(m =>
+      `<div class="row"><span>${m.conf_uid}</span><span class="v">` +
+      `${m.memories ?? "?"} 条记忆 · ${m.keywords ?? "?"} 关键词 · ` +
+      `${m.size_kb} KB</span></div>`).join("")
+    : '<span class="v">无记忆库</span>';
+
+  document.getElementById("storage").innerHTML =
+    `<div class="row"><span>记忆库 (LTM)</span><span class="v">` +
+    `${d.storage.ltm.size_mb} MB / ${d.storage.ltm.files} 文件</span></div>` +
+    `<div class="row"><span>音频缓存</span><span class="v">` +
+    `${d.storage.cache.size_mb} MB</span></div>` +
+    `<div class="row"><span>日志</span><span class="v">` +
+    `${d.storage.logs.size_mb} MB</span></div>`;
+}
+async function restart() {
+  if (!confirm("重启后端？约 40 秒。")) return;
+  const r = await (await fetch("/cc/api/restart",
+    { method: "POST" })).json();
+  const t = document.getElementById("toast");
+  t.textContent = r.message; t.style.display = "block";
+}
+load();
+setInterval(load, 30000);
+</script>
+</body>
+</html>
