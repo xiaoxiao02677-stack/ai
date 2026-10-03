@@ -3,148 +3,700 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Control Center · 屿禾</title>
+<title>屿禾总控台</title>
 <style>
-:root { --bg:#0f1115; --card:#1a1e26; --line:#2a3140; --tx:#e8ecf3;
-        --dim:#8a94a6; --acc:#5b8cff; --ok:#3ddc84; --err:#ff5c5c; }
+:root {
+  --bg:#0f1115; --bg2:#14171f; --card:#1a1e26; --line:#2a3140;
+  --tx:#e8ecf3; --dim:#8a94a6; --acc:#5b8cff; --ok:#3ddc84;
+  --err:#ff5c5c; --warn:#ffb454; --code:#0b0d12;
+}
+[data-theme="light"] {
+  --bg:#f4f6fb; --bg2:#eef1f8; --card:#ffffff; --line:#d8dfee;
+  --tx:#1c2333; --dim:#67718a; --acc:#3d6ef7; --ok:#17a05e;
+  --err:#d23c3c; --warn:#c07a10; --code:#f2f4fa;
+}
 * { box-sizing:border-box; margin:0; padding:0; }
-body { background:var(--bg); color:var(--tx); font:14px/1.55 system-ui,
-  "PingFang SC","Microsoft YaHei",sans-serif; padding:24px; }
-h1 { font-size:22px; margin-bottom:4px; }
-.sub { color:var(--dim); font-size:13px; margin-bottom:20px; }
-.grid { display:grid; gap:14px; margin-bottom:22px; }
-.nav { grid-template-columns:repeat(auto-fill,minmax(170px,1fr)); }
-.cards { grid-template-columns:repeat(auto-fill,minmax(240px,1fr)); }
-.card { background:var(--card); border:1px solid var(--line);
-  border-radius:12px; padding:16px; text-decoration:none; color:var(--tx);
-  transition:.15s; display:block; }
-.card:hover { border-color:var(--acc); transform:translateY(-2px); }
-.card .icon { font-size:24px; margin-bottom:6px; }
-.card .name { font-weight:600; margin-bottom:2px; }
-.card .desc { color:var(--dim); font-size:12px; }
-.panel { background:var(--card); border:1px solid var(--line);
-  border-radius:12px; padding:16px; }
-.panel h3 { font-size:14px; margin-bottom:12px; color:var(--dim);
-  font-weight:500; }
-.dot { display:inline-block; width:8px; height:8px; border-radius:50%;
-  margin-right:6px; }
+body { background:var(--bg); color:var(--tx);
+  font:14px/1.55 system-ui,"PingFang SC","Microsoft YaHei",sans-serif;
+  height:100vh; overflow:hidden; display:flex; flex-direction:column; }
+header { display:flex; align-items:center; gap:14px; padding:10px 16px;
+  background:var(--bg2); border-bottom:1px solid var(--line);
+  flex-shrink:0; }
+header h1 { font-size:17px; white-space:nowrap; }
+.chips { display:flex; gap:8px; flex-wrap:nowrap; overflow-x:auto;
+  flex:1; }
+.chip { background:var(--card); border:1px solid var(--line);
+  padding:4px 11px; border-radius:999px; font-size:12px;
+  white-space:nowrap; }
+.dot { display:inline-block; width:7px; height:7px; border-radius:50%;
+  margin-right:5px; }
 .dot.on { background:var(--ok); } .dot.off { background:var(--err); }
+.dot.warn { background:var(--warn); }
+.hbtn { background:var(--card); border:1px solid var(--line);
+  color:var(--tx); padding:5px 12px; border-radius:8px; cursor:pointer;
+  font-size:12px; white-space:nowrap; }
+.hbtn:hover { border-color:var(--acc); }
+.hbtn.danger { border-color:var(--err); color:var(--err); }
+.layout { display:flex; flex:1; overflow:hidden; }
+.sidebar { width:180px; background:var(--bg2); border-right:1px solid
+  var(--line); padding:10px 8px; overflow-y:auto; flex-shrink:0;
+  transition:width .15s; }
+.sidebar.collapsed { width:46px; }
+.sidebar .item { display:flex; align-items:center; gap:9px;
+  padding:9px 11px; border-radius:8px; cursor:pointer; font-size:13px;
+  color:var(--dim); margin-bottom:2px; white-space:nowrap; }
+.sidebar .item:hover { background:var(--card); color:var(--tx); }
+.sidebar .item.active { background:var(--card); color:var(--acc);
+  border:1px solid var(--line); }
+.sidebar.collapsed .item span { display:none; }
+.sidebar .collapse { margin-top:8px; border-top:1px solid var(--line);
+  padding-top:8px; }
+.main { flex:1; overflow-y:auto; padding:18px; }
+.pane { display:none; }
+.pane.active { display:block; }
+.pane h2 { font-size:17px; margin-bottom:12px; }
+.panel { background:var(--card); border:1px solid var(--line);
+  border-radius:12px; padding:16px; margin-bottom:14px; }
+.panel h3 { font-size:13px; color:var(--dim); font-weight:500;
+  margin-bottom:10px; }
+.grid { display:grid; gap:14px; }
+.grid.c2 { grid-template-columns:repeat(auto-fill,minmax(320px,1fr)); }
+.grid.c3 { grid-template-columns:repeat(auto-fill,minmax(240px,1fr)); }
 .row { display:flex; justify-content:space-between; padding:6px 0;
   border-bottom:1px solid var(--line); font-size:13px; }
 .row:last-child { border-bottom:none; }
-.row .v { color:var(--dim); }
+.row .v { color:var(--dim); word-break:break-all; text-align:right; }
 table { width:100%; border-collapse:collapse; font-size:13px; }
 th { text-align:left; color:var(--dim); font-weight:500; font-size:11px;
-  padding:6px 8px; border-bottom:1px solid var(--line); }
-td { padding:7px 8px; border-bottom:1px solid var(--line); }
-.btn { background:var(--acc); border:none; color:#fff; padding:8px 18px;
-  border-radius:8px; cursor:pointer; font-size:13px; }
-.btn.warn { background:transparent; border:1px solid var(--err);
-  color:var(--err); }
-.chips { display:flex; flex-wrap:wrap; gap:8px; }
-.chip { background:var(--bg); border:1px solid var(--line); padding:5px 12px;
-  border-radius:999px; font-size:12px; }
-header { display:flex; justify-content:space-between; align-items:center;
-  margin-bottom:8px; }
-#toast { position:fixed; bottom:24px; right:24px; background:var(--card);
-  border:1px solid var(--acc); border-radius:10px; padding:12px 18px;
-  display:none; z-index:9; }
+  padding:7px 9px; border-bottom:1px solid var(--line); }
+td { padding:8px 9px; border-bottom:1px solid var(--line);
+  vertical-align:top; }
+tr:last-child td { border-bottom:none; }
+.btn { background:var(--card); border:1px solid var(--line);
+  color:var(--tx); padding:6px 13px; border-radius:8px; cursor:pointer;
+  font-size:12px; }
+.btn:hover { border-color:var(--acc); }
+.btn.primary { background:var(--acc); border-color:var(--acc);
+  color:#fff; }
+.btn.danger { border-color:var(--err); color:var(--err); }
+.btn:disabled { opacity:.45; cursor:not-allowed; }
+.mask { font-family:ui-monospace,monospace; color:var(--dim);
+  font-size:12px; }
+.badge { font-size:11px; padding:2px 8px; border-radius:999px;
+  border:1px solid var(--line); white-space:nowrap; }
+.badge.def { background:rgba(91,140,255,.15); border-color:var(--acc);
+  color:var(--acc); }
+.badge.ok { color:var(--ok); border-color:var(--ok); }
+.badge.err { color:var(--err); border-color:var(--err); }
+.logview { background:var(--code); border:1px solid var(--line);
+  border-radius:10px; padding:12px; font-family:ui-monospace,Consolas,
+  monospace; font-size:12px; line-height:1.5; height:420px;
+  overflow:auto; white-space:pre-wrap; word-break:break-all; }
+input, select, textarea { width:100%; background:var(--bg);
+  border:1px solid var(--line); color:var(--tx); padding:7px 10px;
+  border-radius:8px; font-size:13px; }
+label { display:block; margin:9px 0 3px; color:var(--dim);
+  font-size:12px; }
+.modal { position:fixed; inset:0; background:rgba(0,0,0,.55);
+  display:none; align-items:center; justify-content:center; z-index:90; }
+.modal.open { display:flex; }
+.modal .box { background:var(--card); border:1px solid var(--line);
+  border-radius:14px; padding:20px; width:540px; max-width:92vw;
+  max-height:86vh; overflow:auto; }
+.modal .actions { margin-top:16px; display:flex; gap:10px;
+  justify-content:flex-end; }
+.toast { position:fixed; bottom:22px; right:22px; background:var(--card);
+  border:1px solid var(--acc); border-radius:10px; padding:11px 17px;
+  display:none; z-index:99; max-width:420px; }
+.toast.err { border-color:var(--err); }
+.section-title { font-size:14px; font-weight:600; margin:16px 0 8px; }
+.tabs { display:flex; gap:6px; margin-bottom:12px; flex-wrap:wrap; }
+.tabs .tab { padding:5px 13px; border-radius:8px; cursor:pointer;
+  border:1px solid var(--line); color:var(--dim); font-size:12px;
+  background:var(--card); }
+.tabs .tab.active { color:var(--acc); border-color:var(--acc); }
+.kv { display:grid; grid-template-columns:110px 1fr; gap:4px 10px;
+  font-size:13px; }
+.kv .k { color:var(--dim); }
+@media (max-width:900px) {
+  .sidebar { width:46px; }
+  .sidebar .item span { display:none; }
+}
 </style>
 </head>
 <body>
 <header>
-  <div>
-    <h1>🎛️ Control Center</h1>
-    <div class="sub">系统总控台 · <span id="meta"></span></div>
-  </div>
-  <div style="display:flex;gap:10px;">
-    <button class="btn" onclick="location.reload()">刷新</button>
-    <button class="btn warn" onclick="restart()">重启后端</button>
-  </div>
+  <h1>🎛️ 屿禾总控台</h1>
+  <div class="chips" id="chips"><span class="chip">加载中…</span></div>
+  <button class="hbtn" id="themeBtn" title="切换主题">☀️</button>
+  <button class="hbtn" onclick="refreshAll()">⟳</button>
+  <button class="hbtn danger" onclick="doRestart()">重启</button>
 </header>
+<div class="layout">
+  <nav class="sidebar" id="sidebar">
+    <div class="item active" data-pane="overview">📊 <span>总览</span></div>
+    <div class="item" data-pane="providers">🔌 <span>接口</span></div>
+    <div class="item" data-pane="devices">🤖 <span>设备</span></div>
+    <div class="item" data-pane="memory">🧠 <span>记忆</span></div>
+    <div class="item" data-pane="config">⚙️ <span>配置</span></div>
+    <div class="item" data-pane="tools">🛠️ <span>工具</span></div>
+    <div class="item" data-pane="logs">📜 <span>日志</span></div>
+    <div class="item" data-pane="system">💻 <span>系统</span></div>
+    <div class="item collapse" id="collapseBtn">◀ <span>收起</span></div>
+  </nav>
+  <main class="main" id="main">
 
-<div class="grid nav" id="nav">
-  <a class="card" href="/providers/"><div class="icon">🔌</div>
-    <div class="name">Providers</div>
-    <div class="desc">LLM / TTS / STT / 接口配置与测试</div></a>
-  <a class="card" href="/workshop/"><div class="icon">🤖</div>
-    <div class="name">Devices · 屿禾工坊</div>
-    <div class="desc">设备状态 / 命令 / 生命周期</div></a>
-  <a class="card" href="/memory/"><div class="icon">🧠</div>
-    <div class="name">Memory</div>
-    <div class="desc">长期记忆浏览与管理</div></a>
-  <a class="card" href="/config/"><div class="icon">⚙️</div>
-    <div class="name">Config</div>
-    <div class="desc">conf.yaml 高级编辑</div></a>
-  <a class="card" href="/" target="_blank"><div class="icon">💬</div>
-    <div class="name">AI Chat</div>
-    <div class="desc">聊天前端</div></a>
-  <a class="card" href="/web-tool/index.html" target="_blank">
-    <div class="icon">🛠️</div><div class="name">Web 工具</div>
-    <div class="desc">ASR / TTS 调试</div></a>
+    <!-- ============ OVERVIEW ============ -->
+    <div class="pane active" id="pane-overview">
+      <h2>系统总览</h2>
+      <div class="grid c3" id="ov-cards"></div>
+      <div class="grid c2">
+        <div class="panel"><h3>🖥️ 服务状态</h3><div id="ov-services"></div></div>
+        <div class="panel"><h3>🔌 Provider 健康</h3><div id="ov-providers"></div></div>
+        <div class="panel"><h3>🧠 记忆库</h3><div id="ov-memories"></div></div>
+        <div class="panel"><h3>💾 存储 / Git</h3><div id="ov-storage"></div></div>
+      </div>
+    </div>
+
+    <!-- ============ PROVIDERS ============ -->
+    <div class="pane" id="pane-providers">
+      <h2>接口管理</h2>
+      <div class="grid c3" id="pv-cats"></div>
+      <div id="pv-list"></div>
+    </div>
+
+    <!-- ============ DEVICES ============ -->
+    <div class="pane" id="pane-devices">
+      <h2>设备</h2>
+      <div class="panel"><h3>在线设备</h3><div id="dv-cards"></div></div>
+      <div class="panel"><h3>设备详情</h3><div id="dv-detail"></div></div>
+      <div class="panel"><h3>命令历史</h3><div id="dv-commands"></div></div>
+    </div>
+
+    <!-- ============ MEMORY ============ -->
+    <div class="pane" id="pane-memory">
+      <h2>记忆管理</h2>
+      <div class="panel">
+        <div class="row"><span>会话</span><span class="v" id="mem-session"></span></div>
+        <div class="row"><span>统计</span><span class="v" id="mem-stats"></span></div>
+      </div>
+      <div class="panel"><h3>记忆列表</h3>
+        <div id="mem-toolbar" style="margin-bottom:10px;"></div>
+        <div style="overflow-x:auto;"><table><thead><tr>
+          <th>类型</th><th>内容</th><th>关键词</th><th>评分</th><th>状态</th><th>操作</th>
+        </tr></thead><tbody id="mem-rows"></tbody></table></div>
+      </div>
+    </div>
+
+    <!-- ============ CONFIG ============ -->
+    <div class="pane" id="pane-config">
+      <h2>配置（conf.yaml）</h2>
+      <div class="panel">
+        <div class="row"><span>修改时间</span><span class="v" id="cfg-meta"></span></div>
+        <div class="section-title">关键值（只读概览）</div>
+        <div class="kv" id="cfg-key"></div>
+        <div class="section-title">YAML 全文（可直接编辑并保存）</div>
+        <textarea id="cfg-raw" style="height:380px;font-family:ui-monospace,monospace;font-size:12px;"></textarea>
+        <div class="actions" style="display:flex;gap:10px;justify-content:flex-end;margin-top:12px;">
+          <button class="btn" onclick="cfgReload()">重新载入</button>
+          <button class="btn primary" onclick="cfgSave()">保存并重启</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ TOOLS ============ -->
+    <div class="pane" id="pane-tools">
+      <h2>调试工具</h2>
+      <div class="grid c2">
+        <div class="panel"><h3>🎤 ASR 试听</h3>
+          <label>上传音频（wav/mp3，16k 单声道最佳）</label>
+          <input type="file" id="tl-asr-file" accept="audio/*">
+          <div style="margin-top:10px;"><button class="btn primary"
+            onclick="toolAsr()">识别</button></div>
+          <div class="panel" style="margin-top:12px;background:var(--code);">
+            <div id="tl-asr-result" class="mask">结果将显示在这里</div>
+          </div>
+        </div>
+        <div class="panel"><h3>🔊 TTS 试听</h3>
+          <label>文本</label><textarea id="tl-tts-text"
+            style="height:70px;">你好，这是总控台的语音测试。</textarea>
+          <div style="margin-top:10px;"><button class="btn primary"
+            onclick="toolTts()">合成并播放</button></div>
+          <div style="margin-top:12px;"><audio id="tl-tts-audio"
+            controls style="width:100%;display:none;"></audio></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ LOGS ============ -->
+    <div class="pane" id="pane-logs">
+      <h2>日志</h2>
+      <div class="tabs" id="log-tabs">
+        <div class="tab active" data-tag="backend">后端</div>
+        <div class="tab" data-tag="restart">重启</div>
+        <div class="tab" data-tag="tls">TLS</div>
+      </div>
+      <div class="logview" id="log-view">加载中…</div>
+      <div style="margin-top:10px;display:flex;gap:8px;">
+        <button class="btn" onclick="logsLoad()">刷新</button>
+        <button class="btn" onclick="logsLoad(true)">只看最新 100 行</button>
+      </div>
+    </div>
+
+    <!-- ============ SYSTEM ============ -->
+    <div class="pane" id="pane-system">
+      <h2>系统</h2>
+      <div class="grid c2">
+        <div class="panel"><h3>🖥️ 主机</h3><div id="sys-host"></div></div>
+        <div class="panel"><h3>🔒 TLS 公网入口</h3><div id="sys-tls"></div></div>
+        <div class="panel"><h3>📦 配置备份（最近 10 份）</h3><div id="sys-backups"></div></div>
+        <div class="panel"><h3>🔧 操作</h3><div id="sys-actions"></div></div>
+      </div>
+    </div>
+
+  </main>
 </div>
+<div class="modal" id="modal"><div class="box">
+  <h3 id="modalTitle"></h3><div id="modalBody"></div>
+  <div class="actions"><button class="btn" onclick="closeModal()">取消</button>
+    <button class="btn primary" id="modalSave">保存</button></div>
+</div></div>
+<div class="toast" id="toast"></div>
 
-<div class="grid cards">
-  <div class="panel"><h3>🖥️ 服务状态</h3><div id="services"></div></div>
-  <div class="panel"><h3>🤖 设备</h3><div id="devices"></div></div>
-  <div class="panel"><h3>🔌 Provider 健康</h3><div id="providers"></div></div>
-  <div class="panel"><h3>🧠 记忆库</h3><div id="memories"></div></div>
-  <div class="panel"><h3>💾 存储 / 版本</h3><div id="storage"></div></div>
-</div>
-
-<div id="toast"></div>
 <script>
-async function load() {
-  const d = await (await fetch("/cc/api/overview")).json();
-  document.getElementById("meta").textContent =
-    "运行 " + d.uptimeMinutes + " 分钟 · " +
-    d.git.commit + (d.git.clean ? " · clean" : " · 有未提交") +
-    " · 生成于 " + d.generatedAt;
+const API = "/cc/api";
+let theme = localStorage.getItem("cc-theme") || "dark";
+let logTag = "backend", logAll = false;
+let pvCat = null;
 
-  document.getElementById("services").innerHTML = d.services.map(s =>
-    `<div class="row"><span><span class="dot ${s.ok ? "on" : "off"}">` +
-    `</span>${s.name}</span><span class="v">${s.ok ? "正常" : "不可用"}` +
-    `</span></div>`).join("");
-
-  document.getElementById("devices").innerHTML =
-    `<div class="row"><span>在线</span><span class="v">` +
-    `${d.devices.online} / ${d.devices.total}</span></div>` +
-    `<div class="row"><span>STALE / 断开</span><span class="v">` +
-    `${d.devices.stale} / ${d.devices.disconnected}</span></div>` +
-    `<div class="row"><span>设备</span><span class="v">` +
-    (d.devices.ids.join("，") || "无") + `</span></div>`;
-
-  const ph = d.providerHealth.length ? d.providerHealth.map(p =>
-    `<span class="chip">${p.category}/${p.id}: ${p.status}` +
-    (p.latencyMs != null ? " · " + p.latencyMs + "ms" : "") +
-    `</span>`).join("") : '<span class="v">尚无测试记录（去 Providers 测一次）</span>';
-  document.getElementById("providers").innerHTML =
-    `<div class="chips">${ph}</div>`;
-
-  document.getElementById("memories").innerHTML = d.memories.length
-    ? d.memories.map(m =>
-      `<div class="row"><span>${m.conf_uid}</span><span class="v">` +
-      `${m.memories ?? "?"} 条记忆 · ${m.keywords ?? "?"} 关键词 · ` +
-      `${m.size_kb} KB</span></div>`).join("")
-    : '<span class="v">无记忆库</span>';
-
-  document.getElementById("storage").innerHTML =
-    `<div class="row"><span>记忆库 (LTM)</span><span class="v">` +
-    `${d.storage.ltm.size_mb} MB / ${d.storage.ltm.files} 文件</span></div>` +
-    `<div class="row"><span>音频缓存</span><span class="v">` +
-    `${d.storage.cache.size_mb} MB</span></div>` +
-    `<div class="row"><span>日志</span><span class="v">` +
-    `${d.storage.logs.size_mb} MB</span></div>`;
+// ---------------- infra ----------------
+async function j(url, opts = {}) {
+  const r = await fetch(url, { headers: {"Content-Type": "application/json"},
+    ...opts });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(d.detail || d.message || r.status);
+  return d;
 }
-async function restart() {
-  if (!confirm("重启后端？约 40 秒。")) return;
-  const r = await (await fetch("/cc/api/restart",
-    { method: "POST" })).json();
+function toast(msg, err = false) {
   const t = document.getElementById("toast");
-  t.textContent = r.message; t.style.display = "block";
+  t.textContent = msg; t.className = err ? "err" : "";
+  t.style.display = "block";
+  setTimeout(() => t.style.display = "none", 3200);
 }
-load();
-setInterval(load, 30000);
+function el(id) { return document.getElementById(id); }
+function esc(s) { return String(s ?? "").replace(/[&<>"]/g,
+  c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
+const DOT = {on:"on", ok:"on", connected:"on", online:"on", error:"off",
+  err:"off", fail:"off", off:"off", disabled:"off", unknown:"warn",
+  testing:"warn", warn:"warn"};
+
+// ---------------- theme ----------------
+function applyTheme() {
+  document.documentElement.setAttribute("data-theme", theme);
+  document.getElementById("themeBtn").textContent =
+    theme === "dark" ? "☀️" : "🌙";
+}
+document.getElementById("themeBtn").onclick = () => {
+  theme = theme === "dark" ? "light" : "dark";
+  localStorage.setItem("cc-theme", theme);
+  applyTheme();
+};
+
+// ---------------- sidebar ----------------
+document.querySelectorAll(".sidebar .item[data-pane]").forEach(it =>
+  it.onclick = () => {
+    document.querySelectorAll(".pane").forEach(p =>
+      p.classList.remove("active"));
+    document.querySelectorAll(".sidebar .item[data-pane]").forEach(i =>
+      i.classList.remove("active"));
+    it.classList.add("active");
+    el("pane-" + it.dataset.pane).classList.add("active");
+    const loaders = {overview: ovLoad, providers: pvLoad,
+      devices: dvLoad, memory: memLoad, config: cfgLoad,
+      tools: null, logs: logsLoad, system: sysLoad};
+    loaders[it.dataset.pane]?.();
+  });
+document.getElementById("collapseBtn").onclick = () => {
+  document.getElementById("sidebar").classList.toggle("collapsed");
+};
+
+// ---------------- header chips ----------------
+async function chipsLoad() {
+  try {
+    const d = await j(API + "/overview");
+    const c = [];
+    c.push(`<span class="chip"><span class="dot ${d.devices.online ?
+      "on":"off"}"></span>设备 ${d.devices.online}/${d.devices.total}</span>`);
+    for (const p of d.providerHealth.slice(0, 4))
+      c.push(`<span class="chip"><span class="dot
+        ${DOT[p.status]||"warn"}"></span>${p.category} ${p.status}</span>`);
+    c.push(`<span class="chip">运行 ${d.uptimeMinutes} 分钟</span>`);
+    el("chips").innerHTML = c.join("");
+  } catch {}
+}
+async function refreshAll() { chipsLoad(); ovLoad(); pvLoad(); dvLoad();
+  memLoad(); sysLoad(); logsLoad(); }
+
+// ---------------- OVERVIEW ----------------
+async function ovLoad() {
+  try {
+    const d = await j(API + "/overview");
+    el("ov-cards").innerHTML = `
+      <div class="panel"><h3>🤖 设备</h3>
+        <div class="row"><span>在线</span><span class="v">${d.devices.online}
+        / ${d.devices.total}</span></div>
+        <div class="row"><span>STALE / 断开</span><span class="v">
+        ${d.devices.stale} / ${d.devices.disconnected}</span></div></div>
+      <div class="panel"><h3>⏱ 运行</h3>
+        <div class="row"><span>分钟</span><span class="v">${d.uptimeMinutes}
+        </span></div>
+        <div class="row"><span>Git</span><span class="v">${d.git.commit}
+        ${d.git.clean ? "· clean" : "· 有未提交"}</span></div></div>
+      <div class="panel"><h3>📦 存储</h3>
+        <div class="row"><span>记忆库</span><span class="v">${d.storage.ltm.size_mb} MB</span></div>
+        <div class="row"><span>缓存</span><span class="v">${d.storage.cache.size_mb} MB</span></div>
+        <div class="row"><span>日志</span><span class="v">${d.storage.logs.size_mb} MB</span></div></div>`;
+    el("ov-services").innerHTML = d.services.map(s =>
+      `<div class="row"><span><span class="dot ${s.ok?"on":"off"}"></span>
+      ${s.name}</span><span class="v">${s.ok?"正常":"不可用"}</span></div>`
+      ).join("");
+    el("ov-providers").innerHTML = d.providerHealth.length ?
+      d.providerHealth.map(p => `<div class="row"><span>
+      ${p.category}/${p.id}</span><span class="v">
+      ${p.status}${p.latencyMs!=null?" · "+p.latencyMs+"ms":""}</span></div>`
+      ).join("") : '<span class="v">暂无测试记录</span>';
+    el("ov-memories").innerHTML = d.memories.length ? d.memories.map(m =>
+      `<div class="row"><span>${m.conf_uid}</span><span class="v">
+      ${m.memories??"?"} 记忆 · ${m.keywords??"?"} 关键词</span></div>`
+      ).join("") : '<span class="v">无记忆库</span>';
+    el("ov-storage").innerHTML = `
+      <div class="row"><span>commit</span><span class="v">${d.git.commit}</span></div>
+      <div class="row"><span>工作区</span><span class="v">${d.git.clean?"clean":"dirty"}</span></div>`;
+  } catch (e) { toast(e.message, true); }
+}
+
+// ---------------- PROVIDERS ----------------
+const ICONS = {llm:"🤖", tts:"🔊", stt:"🎤", embedding:"🧠",
+  vision:"👁", search:"🔎", custom:"🔌"};
+const FIELDS = {
+  llm: [["base_url","Base URL"],["llm_api_key","API Key"],
+    ["model","Model"],["temperature","Temperature"],["timeout","Timeout"]],
+  tts: [["voice","Voice"],["rate","Speed"],["volume","Volume"]],
+  stt: [["model","Model"],["language","Language"],["timeout","Timeout"]],
+};
+async function pvLoad() {
+  const d = await j("/providers/api/overview");
+  el("pv-cats").innerHTML = d.categories.map(c =>
+    `<div class="panel" style="cursor:pointer;"
+      onclick="pvOpen('${c.key}')">
+      <div style="font-size:24px;">${ICONS[c.key]||"🔌"}</div>
+      <b>${c.label}</b>
+      <div class="mask">${c.count} 个 · 默认 ${c.defaultId||"—"}</div>
+    </div>`).join("");
+  if (!pvCat) return;
+  pvOpen(pvCat);
+}
+async function pvOpen(key) {
+  pvCat = key;
+  const d = await j("/providers/api/categories/" + key + "/providers");
+  el("pv-list").innerHTML = `
+    <div class="section-title">${ICONS[key]} ${key.toUpperCase()} ·
+      默认 ${d.defaultId || "—"}
+      <button class="btn primary" style="margin-left:10px;"
+        onclick="pvAdd()">+ 添加</button></div>
+    <div style="overflow-x:auto;"><table><thead><tr>
+      <th>名称</th><th>Base URL</th><th>Model</th><th>状态</th>
+      <th>延迟</th><th>默认</th><th>操作</th></tr></thead><tbody>
+    ${d.providers.map(p => `<tr>
+      <td><b>${esc(p.name)}</b></td>
+      <td class="mask">${esc(p.baseUrl||"—")}</td>
+      <td>${esc(p.model||"—")}</td>
+      <td><span class="dot ${DOT[p.enabled?p.status:"disabled"]||"warn"}"></span>
+        ${p.enabled?p.status:"disabled"}
+        ${p.lastError?`<div class="mask">${esc(p.lastError)}</div>`:""}</td>
+      <td>${p.latencyMs!=null?p.latencyMs+"ms":"—"}</td>
+      <td>${p.isDefault?'<span class="badge def">默认</span>':
+        `<button class="btn" onclick="pvDefault('${p.id}')">设为默认</button>`}</td>
+      <td><button class="btn" onclick="pvTest('${p.id}')">测试</button>
+        <button class="btn" onclick="pvEdit('${p.id}')">编辑</button>
+        <button class="btn" onclick="pvToggle('${p.id}',${!p.enabled})">
+        ${p.enabled?"禁用":"启用"}</button>
+        <button class="btn danger" onclick="pvDel('${p.id}')">删</button></td>
+    </tr>`).join("") || `<tr><td colspan="7">暂无</td></tr>`}
+    </tbody></table></div>`;
+}
+async function pvTest(id) {
+  try { const r = await j(`/providers/api/categories/${pvCat}/providers/${id}/test`,
+    {method:"POST"});
+    toast(r.status==="connected"?`✓ ${r.latencyMs}ms`:`✗ ${r.error||r.status}`,
+      r.status!=="connected");
+  } catch(e){ toast(e.message, true); }
+  pvOpen(pvCat);
+}
+async function pvDefault(id) {
+  await j(`/providers/api/categories/${pvCat}/providers/${id}/default`,
+    {method:"POST"}); toast("已设为默认 ✓"); pvOpen(pvCat);
+}
+async function pvToggle(id, en) {
+  await j(`/providers/api/categories/${pvCat}/providers/${id}/enabled`,
+    {method:"POST", body:JSON.stringify({enabled:en})});
+  toast(en?"已启用":"已禁用"); pvOpen(pvCat);
+}
+async function pvDel(id) {
+  if (!confirm(`删除 ${id}？`)) return;
+  await j(`/providers/api/categories/${pvCat}/providers/${id}`,
+    {method:"DELETE"}); toast("已删除"); pvOpen(pvCat);
+}
+function pvFields(existing) {
+  const fs = FIELDS[pvCat] || [["base_url","Base URL"],
+    ["api_key","API Key"],["model","Model"]];
+  return fs.map(([k,label]) => {
+    const isKey = /key|token|secret/i.test(k);
+    return `<label>${label}</label><input id="f_${k}"
+      ${isKey?'placeholder="••••••（留空=不改）"':""}>`;
+  }).join("");
+}
+function pvAdd() {
+  el("modalTitle").textContent = "添加 Provider";
+  el("modalBody").innerHTML =
+    `<label>名称（字母/数字/_-）</label><input id="f_name">` + pvFields();
+  el("modalSave").onclick = async () => {
+    const name = el("f_name").value.trim();
+    if (!name) return toast("名称必填", true);
+    const fields = {};
+    document.querySelectorAll("#modalBody input").forEach(i => {
+      if (i.id !== "f_name" && i.value) fields[i.id.slice(2)] = i.value; });
+    try { await j(`/providers/api/categories/${pvCat}/providers`,
+      {method:"POST", body:JSON.stringify({name, fields, setDefault:true})});
+      closeModal(); toast("已添加并设为默认 ✓"); pvOpen(pvCat);
+    } catch(e){ toast(e.message, true); }
+  };
+  el("modal").classList.add("open");
+}
+function pvEdit(id) {
+  el("modalTitle").textContent = "编辑 " + id;
+  el("modalBody").innerHTML = pvFields();
+  el("modalSave").onclick = async () => {
+    const fields = {};
+    document.querySelectorAll("#modalBody input").forEach(i => {
+      if (i.value) fields[i.id.slice(2)] = i.value; });
+    try { await j(`/providers/api/categories/${pvCat}/providers/${id}`,
+      {method:"PUT", body:JSON.stringify({name:id, fields,
+        setDefault:false})});
+      closeModal(); toast("已保存 ✓"); pvOpen(pvCat);
+    } catch(e){ toast(e.message, true); }
+  };
+  el("modal").classList.add("open");
+}
+function closeModal() { el("modal").classList.remove("open"); }
+
+// ---------------- DEVICES ----------------
+let dvSel = null;
+async function dvLoad() {
+  const d = await j("/workshop/api/overview");
+  el("dv-cards").innerHTML = d.devices.map(x => `
+    <div class="panel" style="cursor:pointer;" onclick="dvOpen('${x.device_id}')">
+      <div style="font-size:22px;">🤖</div>
+      <b>${esc(x.display_name||x.device_id)}</b>
+      <div class="row"><span>状态</span><span class="v">${x.connection_state}</span></div>
+      <div class="row"><span>固件</span><span class="v">${x.firmware_version}</span></div>
+      <div class="row"><span>能力</span><span class="v">${x.capabilities.join(", ")}</span></div>
+    </div>`).join("") || '<div class="panel">无设备</div>';
+  if (dvSel) dvOpen(dvSel); else if (d.devices[0]) dvOpen(d.devices[0].device_id);
+}
+async function dvOpen(id) {
+  dvSel = id;
+  const d = await j("/workshop/api/devices/" + id);
+  const h = await j("/workshop/api/devices/" + id + "/health").catch(()=>null);
+  const cmds = await j("/workshop/api/devices/" + id + "/commands").catch(()=>({commands:[]}));
+  el("dv-detail").innerHTML = `
+    <div class="kv">
+      <div class="k">设备</div><div>${esc(d.device_id)}</div>
+      <div class="k">状态</div><div>${d.connection_state}</div>
+      <div class="k">会话</div><div class="mask">${esc(d.session_id||"—")}</div>
+      <div class="k">固件</div><div>${esc(d.firmware_version||"—")}</div>
+      <div class="k">能力</div><div>${(d.capabilities||[]).join(", ")}</div>
+      <div class="k">IP/端口</div><div>${esc(d.ip||"—")}:${d.port||"—"}</div>
+      ${h?`<div class="k">心跳龄</div><div>${h.heartbeat_age??"—"}s</div>
+      <div class="k">健康</div><div>${esc(h.health_status||"—")}</div>`:""}
+    </div>
+    <div style="margin-top:14px;display:flex;gap:8px;">
+      <button class="btn primary" onclick="dvLed(true)">点亮 LED</button>
+      <button class="btn" onclick="dvLed(false)">熄灭 LED</button>
+    </div>`;
+  el("dv-commands").innerHTML = `<table><thead><tr>
+    <th>command_id</th><th>操作</th><th>状态</th><th>时间</th></tr></thead>
+    <tbody>${(cmds.commands||[]).slice(0,20).map(c => `<tr>
+      <td class="mask">${esc(c.command_id)}</td>
+      <td>${esc(c.operation)}</td>
+      <td>${esc(c.status)}</td>
+      <td class="mask">${esc(c.created_at||"")}</td></tr>`).join("")}
+    </tbody></table>`;
+}
+async function dvLed(on) {
+  try {
+    const r = await j(`/workshop/api/devices/${dvSel}/led`,
+      {method:"POST", body:JSON.stringify({on})});
+    toast(`LED ${on?"ON":"OFF"}: ${r.device_ack?.status || r.status}`);
+    dvOpen(dvSel);
+  } catch(e){ toast(e.message, true); }
+}
+
+// ---------------- MEMORY ----------------
+let memConf = null;
+async function memLoad() {
+  const sessions = await j("/memory/api/sessions");
+  memConf = sessions[0]?.conf_uid || null;
+  if (!memConf) {
+    el("mem-session").textContent = "无会话";
+    el("mem-rows").innerHTML = `<tr><td colspan="6">无数据</td></tr>`;
+    return;
+  }
+  el("mem-session").textContent = memConf;
+  const mems = await j(`/memory/api/memories?conf_uid=${memConf}`);
+  el("mem-stats").textContent = `${mems.length} 条记忆`;
+  el("mem-toolbar").innerHTML =
+    `<input id="mem-q" placeholder="搜索内容/关键词…"
+      style="width:220px;display:inline-block;" onkeydown="if(event.key==='Enter')memSearch()">
+    <button class="btn" onclick="memSearch()">搜索</button>`;
+  el("mem-rows").innerHTML = mems.map(m => `<tr>
+    <td>${esc(m.memory_type||"—")}</td>
+    <td>${esc((m.content||"").slice(0,80))}</td>
+    <td>${esc((m.keywords||[]).join(", "))}</td>
+    <td>${m.score??"—"}</td>
+    <td>${esc(m.status||"—")}</td>
+    <td><button class="btn danger" onclick="memDel('${m.memory_id}')">删</button></td>
+  </tr>`).join("");
+}
+async function memSearch() {
+  const q = el("mem-q").value.trim();
+  if (!q) return memLoad();
+  const mems = await j(`/memory/api/memories?conf_uid=${memConf}&q=${encodeURIComponent(q)}`);
+  el("mem-rows").innerHTML = mems.map(m => `<tr>
+    <td>${esc(m.memory_type||"—")}</td>
+    <td>${esc((m.content||"").slice(0,80))}</td>
+    <td>${esc((m.keywords||[]).join(", "))}</td>
+    <td>${m.score??"—"}</td><td>${esc(m.status||"—")}</td>
+    <td><button class="btn danger" onclick="memDel('${m.memory_id}')">删</button></td>
+  </tr>`).join("");
+}
+async function memDel(id) {
+  if (!confirm("删除这条记忆？")) return;
+  await j(`/memory/api/memories/${id}?conf_uid=${memConf}`, {method:"DELETE"});
+  toast("已删除"); memLoad();
+}
+
+// ---------------- CONFIG ----------------
+async function cfgLoad() {
+  const st = await j("/config/api/state");
+  el("cfg-meta").textContent = st.mtime || "";
+  const raw = await j("/config/api/raw");
+  el("cfg-raw").value = typeof raw === "string" ? raw : raw.yaml || "";
+  // key summary
+  const y = raw.yaml || "";
+  const keys = ["system_config", "character_config", "asr_config",
+    "tts_config", "vad_config"];
+  el("cfg-key").innerHTML = keys.map(k => {
+    const m = y.match(new RegExp("^  " + k + ":" , "m"));
+    return `<div class="k">${k}</div><div>${m?"✓ 存在":"—"}</div>`;
+  }).join("");
+}
+async function cfgReload() { cfgLoad(); toast("已重新载入"); }
+async function cfgSave() {
+  if (!confirm("保存 conf.yaml 并重启后端？")) return;
+  try {
+    await j("/config/api/save", {method:"POST",
+      body:JSON.stringify({yaml: el("cfg-raw").value})});
+    toast("已保存，重启中…");
+    setTimeout(() => location.reload(), 40000);
+  } catch(e){ toast(e.message, true); }
+}
+
+// ---------------- TOOLS ----------------
+async function toolAsr() {
+  const f = el("tl-asr-file").files[0];
+  if (!f) return toast("先选择音频文件", true);
+  const fd = new FormData(); fd.append("audio", f);
+  try {
+    const r = await fetch("/asr", {method:"POST", body:fd});
+    const d = await r.json();
+    el("tl-asr-result").textContent = d.text || JSON.stringify(d);
+  } catch(e){ el("tl-asr-result").textContent = "识别失败: " + e.message; }
+}
+async function toolTts() {
+  const text = el("tl-tts-text").value.trim();
+  if (!text) return toast("文本为空", true);
+  const fd = new FormData(); fd.append("text", text);
+  try {
+    const r = await fetch("/tts-ws", {method:"POST", body:fd});
+    const blob = await r.blob();
+    const url = URL.createObjectURL(blob);
+    const a = el("tl-tts-audio"); a.src = url; a.style.display = "block";
+    a.play();
+  } catch(e){ toast("TTS 失败: " + e.message, true); }
+}
+
+// ---------------- LOGS ----------------
+document.querySelectorAll("#log-tabs .tab").forEach(t =>
+  t.onclick = () => {
+    document.querySelectorAll("#log-tabs .tab").forEach(x =>
+      x.classList.remove("active"));
+    t.classList.add("active"); logTag = t.dataset.tag; logsLoad();
+  });
+async function logsLoad(short) {
+  logAll = !short;
+  try {
+    const d = await j(`${API}/logs?tag=${logTag}&lines=${short?100:500}`);
+    el("log-view").textContent = (d.lines||[]).join("\n") ||
+      (d.note || "（空）");
+    el("log-view").scrollTop = el("log-view").scrollHeight;
+  } catch(e){ el("log-view").textContent = "读取失败: " + e.message; }
+}
+
+// ---------------- SYSTEM ----------------
+async function sysLoad() {
+  const d = await j(API + "/system");
+  const m = d.memory, disk = d.disk;
+  el("sys-host").innerHTML = `
+    <div class="row"><span>内存</span><span class="v">${m?m.used_mb+" / "+m.total_mb+" MB (可用 "+m.available_mb+")":"—"}</span></div>
+    <div class="row"><span>磁盘 /</span><span class="v">${disk?disk.used+" / "+disk.total+" ("+disk.use_pct+")":"—"}</span></div>
+    <div class="row"><span>uptime</span><span class="v">${esc(d.uptime||"—")}</span></div>
+    <div class="row"><span>Git</span><span class="v">${d.git.commit} ${d.git.clean?"clean":"dirty"}</span></div>`;
+  el("sys-tls").innerHTML = `
+    <div class="row"><span>状态</span><span class="v"><span class="dot
+      ${d.tls?"on":"off"}"></span>${d.tls?"运行中":"未运行"}</span></div>
+    <div style="margin-top:10px;display:flex;gap:8px;">
+      <button class="btn" onclick="tlsCtl('start')">启动</button>
+      <button class="btn" onclick="tlsCtl('stop')">停止</button>
+      <button class="btn" onclick="tlsCtl('restart')">重启</button>
+    </div>`;
+  el("sys-backups").innerHTML = d.backups.length ?
+    `<table><thead><tr><th>文件</th><th>时间</th><th>KB</th></tr></thead>
+    <tbody>${d.backups.map(b => `<tr><td class="mask">${esc(b.name)}</td>
+      <td class="mask">${esc(b.mtime)}</td><td>${b.size_kb}</td></tr>`).join("")}
+    </tbody></table>` : '<span class="v">无备份</span>';
+  el("sys-actions").innerHTML = `
+    <div class="row"><span>重启后端</span><span>
+      <button class="btn danger" onclick="doRestart()">执行</button></span></div>
+    <div class="row"><span>重启后自动刷新</span><span class="v">40s</span></div>`;
+}
+async function tlsCtl(action) {
+  try { const r = await j(API + "/tls?action=" + action, {method:"POST"});
+    toast(r.ok ? `TLS ${action} ✓` : `TLS 失败: ${r.output}`, !r.ok);
+    sysLoad();
+  } catch(e){ toast(e.message, true); }
+}
+async function doRestart() {
+  if (!confirm("重启后端（约 40 秒）？")) return;
+  await j(API + "/restart", {method:"POST"});
+  toast("重启中…页面将在 40 秒后刷新");
+  setTimeout(() => location.reload(), 40000);
+}
+
+// ---------------- boot ----------------
+applyTheme();
+ovLoad(); chipsLoad();
+setInterval(chipsLoad, 15000);
 </script>
 </body>
 </html>

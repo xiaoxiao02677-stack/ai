@@ -181,6 +181,117 @@ def overview():
 
 
 # ---------------------------------------------------------------------------
+# Logs: tail the backend log (read-only, sanitized)
+# ---------------------------------------------------------------------------
+_LOG_FILE = Path("/tmp/ollvm.log")
+
+
+@router.get("/logs")
+def get_logs(lines: int = 200, tag: str = "backend"):
+    """Tail a known log. tags: backend | restart | tls"""
+    files = {
+        "backend": _LOG_FILE,
+        "restart": Path("/tmp/ollvm-restart.log"),
+        "tls": Path("/tmp/tls_proxy.log"),
+    }
+    path = files.get(tag)
+    if path is None or not path.exists():
+        return {"tag": tag, "lines": [], "note": "日志不存在"}
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError as e:
+        return {"tag": tag, "lines": [f"读取失败: {e}"], "note": "error"}
+    # keep the LAST n lines; strip any key-like secrets defensively
+    import re as _re
+    tail = text.splitlines()[-max(1, min(lines, 1000)):]
+    safe = []
+    for line in tail:
+        line = _re.sub(r"(sk-[A-Za-z0-9_\-]{8,})", "sk-***", line)
+        line = _re.sub(r"(Bearer\s+)[A-Za-z0-9_\-\.]{8,}",
+                       r"\1***", line)
+        safe.append(line)
+    return {"tag": tag, "lines": safe, "count": len(safe)}
+
+
+# ---------------------------------------------------------------------------
+# System: host vitals + TLS control + backups
+# ---------------------------------------------------------------------------
+@router.get("/system")
+def system_info():
+    info = {"git": _git_state()}
+    try:
+        out = subprocess.run(
+            ["free", "-m"], capture_output=True, text=True,
+            timeout=5).stdout.splitlines()
+        parts = out[1].split()
+        info["memory"] = {
+            "total_mb": int(parts[1]), "used_mb": int(parts[2]),
+            "available_mb": int(parts[6])}
+    except Exception:
+        info["memory"] = None
+    try:
+        st = os.statvfs("/")
+        total = st.f_frsize * st.f_blocks
+        free = st.f_frsize * st.f_bavail
+        used = total - free
+        info["disk"] = {
+            "total_gb": round(total / 1073741824, 1),
+            "used_gb": round(used / 1073741824, 1),
+            "avail_gb": round(free / 1073741824, 1),
+            "use_pct": str(round(used * 100 / total)) + "%"}
+    except Exception:
+        info["disk"] = None
+    try:
+        out = subprocess.run(
+            ["uptime"], capture_output=True, text=True,
+            timeout=5).stdout.strip()
+        info["uptime"] = out
+    except Exception:
+        info["uptime"] = None
+    # TLS proxy state (self-signed: verify=False, request-level only)
+    try:
+        import ssl
+        import urllib.request
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        with urllib.request.urlopen("https://127.0.0.1:12393/",
+                                    timeout=3, context=ctx) as r:
+            info["tls"] = r.status == 200
+    except Exception:
+        info["tls"] = False
+    # conf backups (newest 10)
+    backups = []
+    bdir = _CONF_DIR / "backups"
+    if bdir.exists():
+        for f in sorted(bdir.glob("conf-*.yaml"),
+                        key=lambda x: x.stat().st_mtime, reverse=True):
+            backups.append({"name": f.name,
+                            "mtime": datetime.fromtimestamp(
+                                f.stat().st_mtime).isoformat(
+                                timespec="minutes"),
+                            "size_kb": round(f.stat().st_size / 1024, 1)})
+            if len(backups) >= 10:
+                break
+    info["backups"] = backups
+    return info
+
+
+@router.post("/tls")
+def tls_control(action: str = "status"):
+    if action not in ("start", "stop", "restart", "status"):
+        raise HTTPException(400, "action must be start|stop|restart|status")
+    try:
+        out = subprocess.run(
+            ["bash", str(_CONF_DIR / "tlsctl.sh"), action],
+            capture_output=True, text=True, timeout=30)
+        return {"ok": out.returncode == 0,
+                "output": (out.stdout + out.stderr).strip()[:500]}
+    except Exception as e:
+        return {"ok": False, "output": str(e)[:200]}
+
+
+# ---------------------------------------------------------------------------
 # System: restart the backend (owner-safe)
 # ---------------------------------------------------------------------------
 @router.post("/restart")
