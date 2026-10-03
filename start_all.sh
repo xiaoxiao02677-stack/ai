@@ -64,7 +64,10 @@ if curl -s -m 2 -o /dev/null http://127.0.0.1:12395/; then
 else
   echo "  启动 run_server.py ..."
   pkill -f 'run_serve[r]\.py' 2>/dev/null; sleep 1
-  setsid /root/.local/bin/uv run run_server.py > /tmp/ollvm.log 2>&1 < /dev/null &
+  # uv: root path first; fall back to the public copy for non-root
+  UV_BIN=/root/.local/bin/uv
+  [ -x "$UV_BIN" ] || UV_BIN=/opt/uv-public/uv
+  setsid "$UV_BIN" run run_server.py > /tmp/ollvm.log 2>&1 < /dev/null &
   wait_http "http://127.0.0.1:12395/" "后端" || { bad "查看日志: tail -50 /tmp/ollvm.log"; exit 1; }
 fi
 
