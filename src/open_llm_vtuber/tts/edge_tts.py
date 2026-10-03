@@ -48,6 +48,58 @@ class TTSEngine(TTSInterface):
             return None
 
         return file_name
+    async def async_generate_audio_streamed(self, text: str,
+                                             file_name_no_ext=None):
+        """STREAMING synthesis: consume edge-tts audio chunks as they
+        arrive and write them to disk incrementally.
+
+        Returns (file_name, first_chunk_latency_ms). The file is
+        COMPLETE when the coroutine returns (same contract as
+        async_generate_audio), but the first bytes hit the cache
+        early, so downstream chunked sending can start before the
+        whole sentence is synthesized. On failure the partial file
+        is removed and (None, None) is returned (fail-closed, no
+        partial audio exposed).
+        """
+        import time as _time
+        file_name = self.generate_cache_file_name(file_name_no_ext,
+                                                  self.file_extension)
+        t0 = _time.time()
+        first_ms = None
+        try:
+            communicate = edge_tts.Communicate(text, self.voice)
+            with open(file_name, "wb") as f:
+                async for chunk in communicate.stream():
+                    # edge-tts 7.x message: {type: "audio",
+                    # data: <bytes>} (older 6.x emitted the
+                    # audio under the "audio" key)
+                    data = None
+                    if isinstance(chunk, dict):
+                        if chunk.get("type") == "audio":
+                            data = chunk.get("data")
+                        elif chunk.get("audio"):
+                            data = chunk.get("audio")
+                    if data:
+                        if first_ms is None:
+                            first_ms = int(
+                                (_time.time() - t0) * 1000)
+                        f.write(data)
+        except Exception as e:
+            logger.critical(
+                "edge-tts streaming synthesis failed: %s" % e)
+            try:
+                os.remove(file_name)
+            except OSError:
+                pass
+            return None, None
+        if first_ms is None or not os.path.getsize(file_name):
+            try:
+                os.remove(file_name)
+            except OSError:
+                pass
+            return None, None
+        return file_name, first_ms
+
 
 
 # en-US-AvaMultilingualNeural

@@ -16,8 +16,14 @@
     },
     "openai_compatible_llm": {
       "status": "connected",
-      "latencyMs": 3013,
-      "lastTestAt": "2026-10-03T18:28:16",
+      "latencyMs": 3476,
+      "lastTestAt": "2026-10-03T21:04:38",
+      "lastError": ""
+    },
+    "deepseek": {
+      "status": "connected",
+      "latencyMs": 744,
+      "lastTestAt": "2026-10-03T21:04:31",
       "lastError": ""
     }
   },
