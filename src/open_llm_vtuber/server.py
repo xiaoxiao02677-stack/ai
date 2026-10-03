@@ -43,6 +43,13 @@ try:
 except ImportError:  # workshop is optional; server still runs without it
     workshop_router = None
 
+# Provider Center (config/provider_center.py) — unified external-API
+# management under /providers (API at /providers/api)
+try:
+    from config.provider_center import router as providers_router
+except ImportError:  # provider center is optional
+    providers_router = None
+
 
 # Create a custom StaticFiles class that adds CORS headers
 class CORSStaticFiles(StarletteStaticFiles):
@@ -137,6 +144,10 @@ class WebSocketServer:
         if workshop_router is not None:
             self.app.include_router(workshop_router)
 
+        # Provider Center: API routes under /providers/api
+        if providers_router is not None:
+            self.app.include_router(providers_router)
+
         # Initialize and include proxy routes if proxy is enabled
         system_config = config.system_config
         if hasattr(system_config, "enable_proxy") and system_config.enable_proxy:
@@ -203,6 +214,15 @@ class WebSocketServer:
                 "/workshop",
                 CORSStaticFiles(directory="config/workshop_web", html=True),
                 name="workshop_panel",
+            )
+
+        # Provider Center: static frontend under /providers
+        if providers_router is not None:
+            self.app.mount(
+                "/providers",
+                CORSStaticFiles(
+                    directory="config/provider_web", html=True),
+                name="providers_panel",
             )
 
         # Mount main frontend last (as catch-all)

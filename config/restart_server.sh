@@ -4,11 +4,19 @@
 # Order matters: backend must release 12393 before the proxy binds it.
 cd "$(dirname "$0")/.."
 
+# user-agnostic restart: always run the server as the project owner
+# (uu), no matter who invokes this script (root ssh, cron, panel).
+if [ "$(id -un)" != "uu" ]; then
+  exec su - uu -c "cd '/home/uu/桌面/Open-LLM-VTuber' && bash config/restart_server.sh"
+fi
+
 pkill -f run_server.py 2>/dev/null
 sleep 2
 pkill -9 -f run_server.py 2>/dev/null
 
-setsid /root/.local/bin/uv run run_server.py > /tmp/ollvm.log 2>&1 < /dev/null &
+UV_BIN=/root/.local/bin/uv
+[ -x "$UV_BIN" ] || UV_BIN=/opt/uv-public/uv
+setsid "$UV_BIN" run run_server.py > /tmp/ollvm.log 2>&1 < /dev/null &
 
 # wait for the backend to come up on the internal port
 for i in $(seq 1 20); do

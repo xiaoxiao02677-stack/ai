@@ -1,0 +1,18 @@
+{
+  "tts": {
+    "edge_tts": {
+      "status": "connected",
+      "latencyMs": 2197,
+      "lastTestAt": "2026-10-03T17:57:25",
+      "lastError": ""
+    }
+  },
+  "llm": {
+    "stateless_llm_with_template": {
+      "status": "error",
+      "latencyMs": 0,
+      "lastTestAt": "2026-10-03T17:57:37",
+      "lastError": "<urlopen error [Errno 111] Connection refused>"
+    }
+  }
+}

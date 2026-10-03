@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Provider 管理中心 · 屿禾工坊</title>
+<style>
+:root { --bg:#0f1115; --card:#1a1e26; --line:#2a3140; --tx:#e8ecf3;
+        --dim:#8a94a6; --acc:#5b8cff; --ok:#3ddc84; --err:#ff5c5c;
+        --warn:#ffb454; }
+* { box-sizing:border-box; margin:0; padding:0; }
+body { background:var(--bg); color:var(--tx); font:14px/1.55 system-ui,
+  "PingFang SC","Microsoft YaHei",sans-serif; padding:24px; }
+h1 { font-size:22px; margin-bottom:6px; }
+h1 .sub { color:var(--dim); font-size:13px; font-weight:400; }
+a { color:var(--acc); }
+.header { display:flex; justify-content:space-between; align-items:center;
+  margin-bottom:18px; }
+.btn { background:var(--card); border:1px solid var(--line); color:var(--tx);
+  padding:7px 14px; border-radius:8px; cursor:pointer; font-size:13px; }
+.btn:hover { border-color:var(--acc); }
+.btn.primary { background:var(--acc); border-color:var(--acc); color:#fff; }
+.btn.danger { border-color:var(--err); color:var(--err); }
+.btn:disabled { opacity:.45; cursor:not-allowed; }
+.grid { display:grid; grid-template-columns:repeat(auto-fill,
+  minmax(200px,1fr)); gap:14px; margin-bottom:26px; }
+.catcard { background:var(--card); border:1px solid var(--line);
+  border-radius:12px; padding:16px; cursor:pointer; transition:.15s; }
+.catcard:hover { border-color:var(--acc); transform:translateY(-2px); }
+.catcard .icon { font-size:26px; margin-bottom:8px; }
+.catcard .name { font-weight:600; }
+.catcard .count { color:var(--dim); font-size:12px; }
+.health { display:flex; flex-wrap:wrap; gap:10px; margin-bottom:26px; }
+.health .chip { background:var(--card); border:1px solid var(--line);
+  padding:6px 12px; border-radius:999px; font-size:12px; }
+.dot { display:inline-block; width:8px; height:8px; border-radius:50%;
+  margin-right:6px; }
+.dot.on { background:var(--ok); } .dot.err { background:var(--err); }
+.dot.off { background:var(--dim); } .dot.test { background:var(--warn); }
+table { width:100%; border-collapse:collapse; background:var(--card);
+  border:1px solid var(--line); border-radius:12px; overflow:hidden; }
+th, td { text-align:left; padding:11px 14px; border-bottom:1px solid
+  var(--line); }
+th { color:var(--dim); font-weight:500; font-size:12px; }
+tr:last-child td { border-bottom:none; }
+.mask { font-family:ui-monospace,monospace; color:var(--dim); }
+.badge { font-size:11px; padding:2px 9px; border-radius:999px;
+  border:1px solid var(--line); }
+.badge.def { background:rgba(91,140,255,.15); border-color:var(--acc);
+  color:var(--acc); }
+.badge.off { color:var(--dim); }
+.row-actions { display:flex; gap:8px; }
+.row-actions .btn { padding:4px 10px; font-size:12px; }
+.hidden { display:none; }
+#back { margin-bottom:16px; }
+#toast { position:fixed; bottom:24px; right:24px; background:var(--card);
+  border:1px solid var(--acc); border-radius:10px; padding:12px 18px;
+  display:none; z-index:99; }
+#toast.err { border-color:var(--err); }
+.modal { position:fixed; inset:0; background:rgba(0,0,0,.6); display:none;
+  align-items:center; justify-content:center; z-index:50; }
+.modal.open { display:flex; }
+.modal .box { background:var(--card); border:1px solid var(--line);
+  border-radius:14px; padding:22px; width:520px; max-width:92vw;
+  max-height:86vh; overflow:auto; }
+.modal h3 { margin-bottom:14px; }
+.modal label { display:block; margin:10px 0 4px; color:var(--dim);
+  font-size:12px; }
+.modal input, .modal select { width:100%; background:var(--bg);
+  border:1px solid var(--line); color:var(--tx); padding:8px 10px;
+  border-radius:8px; font-size:13px; }
+.modal .hint { color:var(--dim); font-size:11px; margin-top:3px; }
+.modal .actions { margin-top:18px; display:flex; gap:10px;
+  justify-content:flex-end; }
+.result { margin-top:12px; padding:10px 12px; border-radius:8px;
+  font-size:13px; display:none; }
+.result.ok { display:block; background:rgba(61,220,132,.1);
+  border:1px solid var(--ok); }
+.result.err { display:block; background:rgba(255,92,92,.1);
+  border:1px solid var(--err); }
+</style>
+</head>
+<body>
+<div class="header">
+  <h1>Provider 管理中心 <span class="sub">所有外部接口统一配置 · 测试 ·
+  切换 · 启用/禁用</span></h1>
+  <button class="btn primary" id="restartBtn">应用并重启服务</button>
+</div>
+
+<div class="health" id="health"></div>
+
+<div id="overviewView">
+  <h2 style="margin-bottom:12px;">接口分类</h2>
+  <div class="grid" id="cats"></div>
+</div>
+
+<div id="listView" class="hidden">
+  <button class="btn" id="back">← 返回分类</button>
+  <div class="header">
+    <h2 id="listTitle"></h2>
+    <button class="btn primary" id="addBtn">+ 添加 Provider</button>
+  </div>
+  <table>
+    <thead><tr><th>Provider</th><th>Base URL</th><th>Model</th>
+      <th>状态</th><th>延迟</th><th>默认</th><th>操作</th></tr></thead>
+    <tbody id="rows"></tbody>
+  </table>
+</div>
+
+<div class="modal" id="modal">
+  <div class="box">
+    <h3 id="modalTitle"></h3>
+    <div id="modalBody"></div>
+    <div class="result" id="modalResult"></div>
+    <div class="actions">
+      <button class="btn" onclick="closeModal()">取消</button>
+      <button class="btn primary" id="modalSave">保存</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+const API = "/providers/api";
+let currentCat = null, currentPid = null, mode = "add";
+
+async function j(url, opts = {}) {
+  const r = await fetch(url, { headers: { "Content-Type":
+    "application/json" }, ...opts });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(data.detail || r.status);
+  return data;
+}
+function toast(msg, err = false) {
+  const t = document.getElementById("toast");
+  t.textContent = msg; t.className = err ? "err" : "";
+  t.style.display = "block";
+  setTimeout(() => t.style.display = "none", 3000);
+}
+const ICONS = { llm: "🤖", tts: "🔊", stt: "🎤", embedding: "🧠",
+  vision: "👁", search: "🔎", custom: "🔌" };
+const STATUS_DOT = { connected: "on", error: "err", disabled: "off",
+  testing: "test", unknown: "off" };
+const FIELDS = {
+  llm: [["base_url","Base URL"],["llm_api_key","API Key"],
+    ["model","Model"],["temperature","Temperature"],
+    ["max_tokens","Max Tokens"],["timeout","Timeout"]],
+  tts: [["voice","Voice"],["rate","Speed"],["volume","Volume"]],
+  stt: [["model","Model"],["language","Language"],
+    ["sample_rate","Sample Rate"],["timeout","Timeout"]],
+};
+
+async function loadOverview() {
+  const d = await j(API + "/overview");
+  document.getElementById("health").innerHTML = d.health.map(h =>
+    `<span class="chip"><span class="dot ${STATUS_DOT[h.status] ||
+      "off"}"></span>${h.category}: ${h.status}
+    ${h.latencyMs ? "· " + h.latencyMs + "ms" : ""}</span>`).join("");
+  document.getElementById("cats").innerHTML = d.categories.map(c =>
+    `<div class="catcard" onclick="openCat('${c.key}')">
+       <div class="icon">${ICONS[c.key] || "🔌"}</div>
+       <div class="name">${c.label}</div>
+       <div class="count">${c.count} Providers
+         ${c.defaultId ? "· 默认 " + c.defaultId : ""}</div>
+     </div>`).join("");
+}
+async function openCat(key) {
+  currentCat = key;
+  document.getElementById("overviewView").classList.add("hidden");
+  document.getElementById("listView").classList.remove("hidden");
+  const d = await j(API + "/categories/" + key + "/providers");
+  document.getElementById("listTitle").textContent =
+    ICONS[key] + " " + key.toUpperCase() + " Providers" +
+    (d.defaultId ? "（默认: " + d.defaultId + "）" : "");
+  renderRows(d.providers, d.defaultId);
+}
+function renderRows(list, defId) {
+  document.getElementById("rows").innerHTML = list.map(p => {
+    const st = p.enabled ? p.status : "disabled";
+    return `<tr>
+      <td><b>${p.name}</b><br>
+        <span class="mask">${masked(p.credentials)}</span></td>
+      <td class="mask">${p.baseUrl || "—"}</td>
+      <td>${p.model || "—"}</td>
+      <td><span class="dot ${STATUS_DOT[st] || "off"}"></span>${st}
+        <br><span class="mask">${p.lastError || ""}</span></td>
+      <td>${p.latencyMs != null ? p.latencyMs + "ms" : "—"}</td>
+      <td>${p.isDefault ? '<span class="badge def">默认</span>'
+        : `<button class="btn" onclick="setDefault('${p.id}')">设为默认
+        </button>`}</td>
+      <td><div class="row-actions">
+        <button class="btn" onclick="testIt('${p.id}')">测试</button>
+        <button class="btn" onclick="editIt('${p.id}')">编辑</button>
+        <button class="btn" onclick="toggleIt('${p.id}',
+          ${!p.enabled})">${p.enabled ? "禁用" : "启用"}</button>
+        <button class="btn danger" onclick="delIt('${p.id}')">删除</button>
+      </div></td></tr>`;
+  }).join("") || "<tr><td colspan='7'>暂无 Provider</td></tr>";
+}
+function masked(creds) {
+  const s = Object.entries(creds || {}).map(([k, v]) =>
+    k + "=" + (v || "")).join(" ");
+  return s || "无密钥";
+}
+async function setDefault(pid) {
+  await j(API + `/categories/${currentCat}/providers/${pid}/default`,
+    { method: "POST" });
+  toast("已设为默认 ✓"); openCat(currentCat);
+}
+async function toggleIt(pid, enabled) {
+  await j(API + `/categories/${currentCat}/providers/${pid}/enabled`,
+    { method: "POST", body: JSON.stringify({ enabled }) });
+  toast(enabled ? "已启用 ✓" : "已禁用"); openCat(currentCat);
+}
+async function testIt(pid) {
+  toast("测试中…"); try {
+    const r = await j(API + `/categories/${currentCat}/providers/` +
+      pid + "/test", { method: "POST" });
+    toast(r.status === "connected" ? `连接成功 · ${r.latencyMs}ms`
+      : `失败 · ${r.error || r.status}`, r.status !== "connected");
+  } catch (e) { toast(e.message, true); }
+  openCat(currentCat);
+}
+async function delIt(pid) {
+  if (!confirm(`删除 Provider "${pid}"？`)) return;
+  await j(API + `/categories/${currentCat}/providers/${pid}`,
+    { method: "DELETE" });
+  toast("已删除"); openCat(currentCat);
+}
+function editIt(pid) {
+  currentPid = pid; mode = "edit";
+  document.getElementById("modalTitle").textContent = "编辑 " + pid;
+  const fields = FIELDS[currentCat] || [["base_url","Base URL"],
+    ["api_key","API Key"],["model","Model"]];
+  document.getElementById("modalBody").innerHTML = fields.map(
+    ([k, label]) => {
+      const isKey = /key|token|secret/i.test(k);
+      return `<label>${label}</label><input id="f_${k}" ` +
+        (isKey ? 'placeholder="••••••••••（留空=不修改）"' : "") + ">";
+    }).join("") + `<label>名称</label><input id="f_name"
+      value="${pid}" disabled>`;
+  document.getElementById("modalSave").onclick = saveEdit;
+  openModal();
+}
+function openAdd() {
+  currentPid = null; mode = "add";
+  document.getElementById("modalTitle").textContent = "添加 Provider";
+  const fields = FIELDS[currentCat] || [["base_url","Base URL"],
+    ["api_key","API Key"],["model","Model"]];
+  document.getElementById("modalBody").innerHTML = `
+    <label>Provider 名称（字母/数字/_-）</label><input id="f_name">
+    ` + fields.map(([k, label]) =>
+      `<label>${label}</label><input id="f_${k}">`).join("");
+  document.getElementById("modalSave").onclick = saveAdd;
+  openModal();
+}
+function collectFields() {
+  const out = {};
+  document.querySelectorAll("#modalBody input").forEach(inp => {
+    const id = inp.id.replace("f_", "");
+    if (id === "name" || !inp.value) return;
+    out[id] = inp.value;
+  });
+  return out;
+}
+async function saveAdd() {
+  const name = document.getElementById("f_name").value.trim();
+  if (!name) return toast("名称必填", true);
+  try {
+    await j(API + `/categories/${currentCat}/providers`,
+      { method: "POST", body: JSON.stringify(
+        { name, fields: collectFields(), setDefault: true }) });
+    closeModal(); toast("已添加并设为默认 ✓"); openCat(currentCat);
+  } catch (e) { modalErr(e.message); }
+}
+async function saveEdit() {
+  try {
+    await j(API + `/categories/${currentCat}/providers/${currentPid}`,
+      { method: "PUT", body: JSON.stringify(
+        { name: currentPid, fields: collectFields(),
+          setDefault: false }) });
+    closeModal(); toast("已保存 ✓"); openCat(currentCat);
+  } catch (e) { modalErr(e.message); }
+}
+function modalErr(msg) {
+  const r = document.getElementById("modalResult");
+  r.className = "result err"; r.textContent = msg;
+}
+function openModal() {
+  document.getElementById("modal").classList.add("open");
+  document.getElementById("modalResult").className = "result";
+}
+function closeModal() {
+  document.getElementById("modal").classList.remove("open");
+}
+document.getElementById("back").onclick = () => {
+  document.getElementById("listView").classList.add("hidden");
+  document.getElementById("overviewView").classList.remove("hidden");
+};
+document.getElementById("addBtn").onclick = openAdd;
+document.getElementById("restartBtn").onclick = async () => {
+  if (!confirm("应用配置并重启后端（约 30 秒）？")) return;
+  await j(API + "/restart", { method: "POST" });
+  toast("重启中，约 30 秒后生效…");
+};
+loadOverview();
+</script>
+</body>
+</html>
